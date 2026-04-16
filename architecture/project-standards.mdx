@@ -1,0 +1,192 @@
+---
+title: 'Project standards: linting, formatting, and types'
+description: 'Enforce consistent code quality in Bulletproof React using ESLint, Prettier, TypeScript, Husky, absolute imports, and file naming conventions.'
+---
+
+Consistent standards across a codebase reduce review friction, catch bugs earlier, and make onboarding faster. Bulletproof React uses a layered set of tools — each with a specific job — so that formatting, correctness, type safety, and naming conventions are all enforced automatically rather than left to individual discipline.
+
+## Tools overview
+
+<AccordionGroup>
+  <Accordion title="ESLint">
+    ESLint lints JavaScript and TypeScript for code quality and style violations. Rules are defined in `.eslintrc.cjs` and cover import ordering, cross-feature boundaries, accessibility, React hooks correctness, and more. Running ESLint in CI or as a pre-commit hook ensures no rule violations reach the repository.
+
+    The project extends several rule sets:
+
+    ```js
+    extends: [
+      'eslint:recommended',
+      'plugin:import/errors',
+      'plugin:import/warnings',
+      'plugin:import/typescript',
+      'plugin:@typescript-eslint/recommended',
+      'plugin:react/recommended',
+      'plugin:react-hooks/recommended',
+      'plugin:jsx-a11y/recommended',
+      'plugin:prettier/recommended',
+      'plugin:testing-library/react',
+      'plugin:jest-dom/recommended',
+      'plugin:tailwindcss/recommended',
+      'plugin:vitest/legacy-recommended',
+    ],
+    ```
+  </Accordion>
+  <Accordion title="Prettier">
+    Prettier handles all code formatting. Enable **format on save** in your editor so code is formatted automatically as you work. If auto-formatting fails, it is a signal that a syntax error exists in the file.
+
+    The project's `.prettierrc` configuration:
+
+    ```json
+    {
+      "singleQuote": true,
+      "trailingComma": "all",
+      "printWidth": 80,
+      "tabWidth": 2,
+      "useTabs": false
+    }
+    ```
+
+    Prettier is integrated with ESLint via `plugin:prettier/recommended`, so formatting violations are reported as lint errors.
+
+    <Tip>
+      Configure your editor to run Prettier on save. For VS Code, add `"editor.formatOnSave": true` and set Prettier as the default formatter.
+    </Tip>
+  </Accordion>
+  <Accordion title="TypeScript">
+    TypeScript catches type mismatches and incorrect API usage at build time rather than at runtime. It is especially valuable during large refactors: update your type declarations first, then follow TypeScript errors through the codebase to find every affected call site.
+
+    The project's `tsconfig.json` enables strict mode and configures absolute imports:
+
+    ```json
+    {
+      "compilerOptions": {
+        "target": "ESNext",
+        "lib": ["dom", "dom.iterable", "esnext"],
+        "allowJs": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "noFallthroughCasesInSwitch": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "noEmit": true,
+        "jsx": "react-jsx",
+        "types": ["vite/client", "vitest/globals"],
+        "isolatedModules": true,
+        "baseUrl": ".",
+        "paths": {
+          "@/*": ["./src/*"]
+        }
+      },
+      "include": ["src"],
+      "exclude": ["node_modules"]
+    }
+    ```
+
+    <Note>
+      TypeScript performs type checking at build time. It does not prevent all runtime failures. Complement it with runtime validation (e.g. Zod) where needed.
+    </Note>
+  </Accordion>
+  <Accordion title="Husky">
+    Husky runs git hooks before commits and pushes. Use it to run linting, formatting checks, and type checking before any commit reaches the repository. This ensures that every commit in the history passes the project's quality gates.
+
+    <Tip>
+      Configure a `pre-commit` hook that runs `eslint`, `tsc --noEmit`, and any other checks relevant to your project. See the [Husky documentation](https://typicode.github.io/husky/) for setup details.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Absolute imports
+
+Relative import paths like `../../../components/button` are hard to read and break when you move files. Absolute imports solve both problems. Once configured, you can move a file to a different directory without updating any of its import statements.
+
+Configure the `@/*` alias to map to `src/`:
+
+<CodeGroup>
+
+```json jsconfig.json
+"compilerOptions": {
+  "baseUrl": ".",
+  "paths": {
+    "@/*": ["./src/*"]
+  }
+}
+```
+
+```json tsconfig.json
+"compilerOptions": {
+  "baseUrl": ".",
+  "paths": {
+    "@/*": ["./src/*"]
+  }
+}
+```
+
+</CodeGroup>
+
+With this configuration, any file under `src/` is reachable via `@/`. For example, `src/components/ui/button` becomes `@/components/ui/button` regardless of which file is importing it.
+
+<Tip>
+  The single `@/*` alias is intentionally broad. Defining separate aliases like `@components/*` or `@hooks/*` adds maintenance overhead without meaningful benefit. One alias that covers all of `src/` is enough.
+</Tip>
+
+## File naming conventions
+
+Consistent naming makes the codebase easier to navigate and prevents subtle issues on case-sensitive file systems. Bulletproof React enforces `kebab-case` for all TypeScript files and all folders inside `src/`.
+
+These ESLint rules enforce it automatically:
+
+```js
+'check-file/filename-naming-convention': [
+  'error',
+  {
+    '**/*.{ts,tsx}': 'KEBAB_CASE',
+  },
+  {
+    // ignore the middle extensions of the filename to support filename like bable.config.js or smoke.spec.ts
+    ignoreMiddleExtensions: true,
+  },
+],
+'check-file/folder-naming-convention': [
+  'error',
+  {
+    // all folders within src (except __tests__)should be named in kebab-case
+    'src/**/!(__tests__)': 'KEBAB_CASE',
+  },
+],
+```
+
+The `ignoreMiddleExtensions` option ensures files like `babel.config.js` and `smoke.spec.ts` are not flagged even though they contain a dot before the final extension.
+
+## Setting up standards in a new project
+
+<Steps>
+  <Step title="Install linting and formatting dependencies">
+    Add ESLint, Prettier, and the required plugins to your project:
+
+    ```sh
+    npm install -D eslint prettier eslint-config-prettier eslint-plugin-prettier \
+      @typescript-eslint/parser @typescript-eslint/eslint-plugin \
+      eslint-plugin-import eslint-plugin-react eslint-plugin-react-hooks \
+      eslint-plugin-jsx-a11y eslint-plugin-check-file
+    ```
+  </Step>
+  <Step title="Copy the ESLint config">
+    Use `apps/react-vite/.eslintrc.cjs` as your starting point. Add or remove rule sets to match your project's needs.
+  </Step>
+  <Step title="Copy the Prettier config">
+    Copy `apps/react-vite/.prettierrc` to the root of your project. Adjust `printWidth` or `tabWidth` if your team has different preferences.
+  </Step>
+  <Step title="Configure TypeScript paths">
+    Add `"baseUrl": "."` and `"paths": { "@/*": ["./src/*"] }` to your `tsconfig.json` `compilerOptions`.
+  </Step>
+  <Step title="Install and configure Husky">
+    Run `npx husky init` and add your pre-commit checks to `.husky/pre-commit`. At minimum, run `eslint` and `tsc --noEmit`.
+  </Step>
+  <Step title="Verify everything works">
+    Commit a deliberately badly formatted file and confirm that Husky blocks the commit. Then fix the file and verify the commit goes through.
+  </Step>
+</Steps>

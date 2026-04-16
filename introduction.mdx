@@ -1,0 +1,125 @@
+---
+title: "Bulletproof React: A guide to scalable architecture"
+description: "Learn what makes a React application truly bulletproof — the principles, tools, and structure behind a maintainable, production-ready codebase."
+---
+
+Bulletproof React is an opinionated guide to building production-ready React applications. This page explains the philosophy behind the architecture, the principles it is built on, and how to get your chosen app flavor running locally.
+
+## What makes a React application "bulletproof"?
+
+React is an excellent tool for building front-end applications. Its ecosystem contains hundreds of great libraries for almost anything you might need. That flexibility is also a liability: because there is no pre-defined architecture, teams often end up with messy, inconsistent, and over-complicated codebases.
+
+Bulletproof React presents one way of structuring React applications using proven tools and a feature-based project structure that scales well. It is based on real-world experience across many different codebases, and it focuses on solving practical problems rather than theoretical ones.
+
+A bulletproof React application is built on the following principles:
+
+- **Easy to get started with** — you should be able to clone the repo and be running in minutes
+- **Simple to understand and maintain** — clear folder structure and consistent conventions make the codebase approachable for new contributors
+- **Uses the right tools for the job** — TypeScript, React Query, Zustand, Zod, and Tailwind CSS are chosen because they solve real problems well
+- **Clean boundaries between different parts of the application** — feature-based modules prevent coupling and keep responsibilities clear
+- **Everyone on the team is on the same page** — linting, formatting, and code generation enforce consistency automatically
+- **Secure** — authentication, authorization, and input sanitization are baked into the patterns
+- **Performant** — code splitting, lazy loading, and data fetching strategies are applied throughout
+- **Scalable** — the architecture works for solo projects and large teams alike
+- **Issues detectable as early as possible** — TypeScript, ESLint, unit tests, and E2E tests catch problems before they reach production
+
+## What this guide covers
+
+Explore the core topics covered in this guide:
+
+<CardGroup cols={2}>
+  <Card title="Project structure" icon="folder-tree" href="/architecture/project-structure">
+    The feature-based folder layout that keeps large codebases navigable and prevents unwanted coupling between modules.
+  </Card>
+  <Card title="API layer" icon="plug" href="/data/api-layer">
+    How to structure typed API requests using a single configured Axios client and React Query hooks.
+  </Card>
+  <Card title="Testing" icon="flask" href="/quality/testing">
+    A layered testing strategy using Vitest, Testing Library, and Playwright for unit, integration, and E2E coverage.
+  </Card>
+  <Card title="Security" icon="lock" href="/quality/security">
+    JWT-based authentication, role-based access control, and XSS protection with DOMPurify.
+  </Card>
+</CardGroup>
+
+<Note>
+  Bulletproof React is an **opinionated guide**, not a template, boilerplate, or framework. You are not required to follow every decision exactly as shown. Decide what works best for your team, adapt the tools and patterns to your needs, and stay consistent with whatever approach you choose.
+</Note>
+
+## App flavors
+
+The guide ships with three fully working reference implementations of the same application. Each flavor follows the same architectural principles but targets a different rendering model. Choose the one that matches your project.
+
+<Tabs>
+  <Tab title="React Vite">
+    A client-side React application built with Vite. This is the simplest flavor to get started with.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    ```bash
+    git clone https://github.com/alan2207/bulletproof-react.git
+    cd bulletproof-react
+    cd apps/react-vite
+    cp .env.example .env
+    yarn install
+    ```
+
+    Run the development server:
+
+    ```bash
+    yarn dev
+    ```
+
+    Open [http://localhost:3000](http://localhost:3000) to view the app in the browser.
+  </Tab>
+  <Tab title="Next.js App Router">
+    A Next.js application using the App Router introduced in Next.js 13.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    ```bash
+    git clone https://github.com/alan2207/bulletproof-react.git
+    cd bulletproof-react
+    cd apps/nextjs-app
+    cp .env.example .env
+    yarn install
+    ```
+
+    Start the mock server first, then run the development server:
+
+    ```bash
+    yarn run-mock-server
+    ```
+
+    ```bash
+    yarn dev
+    ```
+
+    The mock server runs on [http://localhost:8080/api](http://localhost:8080/api). Open [http://localhost:3000](http://localhost:3000) to view the app.
+  </Tab>
+  <Tab title="Next.js Pages Router">
+    A Next.js application using the classic Pages Router. The `pages/` folder re-exports page files from the `app/` application layer so all feature code stays co-located.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    ```bash
+    git clone https://github.com/alan2207/bulletproof-react.git
+    cd bulletproof-react
+    cd apps/nextjs-pages
+    cp .env.example .env
+    yarn install
+    ```
+
+    Start the mock server first, then run the development server:
+
+    ```bash
+    yarn run-mock-server
+    ```
+
+    ```bash
+    yarn dev
+    ```
+
+    The mock server runs on [http://localhost:8080/api](http://localhost:8080/api). Open [http://localhost:3000](http://localhost:3000) to view the app.
+  </Tab>
+</Tabs>

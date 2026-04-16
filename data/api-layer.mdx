@@ -1,0 +1,309 @@
+---
+title: 'API layer: organizing requests in Bulletproof React'
+description: 'Learn how Bulletproof React organizes API requests into a single configured client instance, typed fetcher functions, and React Query hooks.'
+---
+
+The API layer in Bulletproof React centralizes every server interaction behind a consistent, typed interface. Instead of scattering fetch calls across components, you define a single pre-configured client, then declare each request — its types, fetcher, and hook — in one place. This keeps your endpoints discoverable, your responses typed end-to-end, and your caching logic predictable.
+
+## Single API client instance
+
+Bulletproof React creates one Axios instance for the entire application and exports it as `api`. All features import this same instance, so authentication headers, base URL, and error handling are configured exactly once.
+
+```typescript src/lib/api-client.ts
+import Axios, { InternalAxiosRequestConfig } from 'axios';
+
+import { useNotifications } from '@/components/ui/notifications';
+import { env } from '@/config/env';
+import { paths } from '@/config/paths';
+
+function authRequestInterceptor(config: InternalAxiosRequestConfig) {
+  if (config.headers) {
+    config.headers.Accept = 'application/json';
+  }
+
+  config.withCredentials = true;
+  return config;
+}
+
+export const api = Axios.create({
+  baseURL: env.API_URL,
+});
+
+api.interceptors.request.use(authRequestInterceptor);
+api.interceptors.response.use(
+  (response) => {
+    return response.data;
+  },
+  (error) => {
+    const message = error.response?.data?.message || error.message;
+    useNotifications.getState().addNotification({
+      type: 'error',
+      title: 'Error',
+      message,
+    });
+
+    if (error.response?.status === 401) {
+      const searchParams = new URLSearchParams();
+      const redirectTo =
+        searchParams.get('redirectTo') || window.location.pathname;
+      window.location.href = paths.auth.login.getHref(redirectTo);
+    }
+
+    return Promise.reject(error);
+  },
+);
+```
+
+<Tip>
+  Import `api` from `@/lib/api-client` in every feature. Never create a second
+  Axios instance — centralizing the client ensures that interceptors, base URL
+  changes, and auth logic apply uniformly across the whole application.
+</Tip>
+
+## Error handling in the API client
+
+The response interceptor in `api-client.ts` handles two concerns automatically:
+
+- **Notification display** — any non-2xx response extracts `error.response?.data?.message` and pushes it to the global notification store so users see meaningful feedback without any per-feature error handling code.
+- **Authentication redirect** — a `401` response redirects the user to the login page while preserving the current path in a `redirectTo` query parameter.
+
+Because these behaviors live in the interceptor, individual request declarations and components do not need to repeat them.
+
+<Note>
+  Type your API responses explicitly and let TypeScript infer those types
+  throughout the component tree. Typed responses catch mismatches between what
+  the server returns and what your UI expects at compile time, before they reach
+  users.
+</Note>
+
+## Request declarations structure
+
+Rather than writing ad-hoc fetch calls inside components, each API endpoint gets its own file inside the feature's `api/` directory. Every declaration follows the same three-part structure:
+
+1. **Types and validation schema** — a Zod schema (for mutations) plus inferred TypeScript types describe exactly what goes in and comes out.
+2. **Fetcher function** — a plain async function that calls `api` and returns a typed promise.
+3. **React Query hook** — a `useQuery` or `useMutation` hook that wraps the fetcher and exposes loading, error, and data states to components.
+
+<CodeGroup>
+
+```typescript get-discussions.ts (query)
+import { queryOptions, useQuery } from '@tanstack/react-query';
+
+import { api } from '@/lib/api-client';
+import { QueryConfig } from '@/lib/react-query';
+import { Discussion, Meta } from '@/types/api';
+
+export const getDiscussions = (
+  page = 1,
+): Promise<{
+  data: Discussion[];
+  meta: Meta;
+}> => {
+  return api.get(`/discussions`, {
+    params: {
+      page,
+    },
+  });
+};
+
+export const getDiscussionsQueryOptions = ({
+  page,
+}: { page?: number } = {}) => {
+  return queryOptions({
+    queryKey: page ? ['discussions', { page }] : ['discussions'],
+    queryFn: () => getDiscussions(page),
+  });
+};
+
+type UseDiscussionsOptions = {
+  page?: number;
+  queryConfig?: QueryConfig<typeof getDiscussionsQueryOptions>;
+};
+
+export const useDiscussions = ({
+  queryConfig,
+  page,
+}: UseDiscussionsOptions) => {
+  return useQuery({
+    ...getDiscussionsQueryOptions({ page }),
+    ...queryConfig,
+  });
+};
+```
+
+```typescript create-discussion.ts (mutation)
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
+
+import { api } from '@/lib/api-client';
+import { MutationConfig } from '@/lib/react-query';
+import { Discussion } from '@/types/api';
+
+import { getDiscussionsQueryOptions } from './get-discussions';
+
+export const createDiscussionInputSchema = z.object({
+  title: z.string().min(1, 'Required'),
+  body: z.string().min(1, 'Required'),
+});
+
+export type CreateDiscussionInput = z.infer<typeof createDiscussionInputSchema>;
+
+export const createDiscussion = ({
+  data,
+}: {
+  data: CreateDiscussionInput;
+}): Promise<Discussion> => {
+  return api.post(`/discussions`, data);
+};
+
+type UseCreateDiscussionOptions = {
+  mutationConfig?: MutationConfig<typeof createDiscussion>;
+};
+
+export const useCreateDiscussion = ({
+  mutationConfig,
+}: UseCreateDiscussionOptions = {}) => {
+  const queryClient = useQueryClient();
+
+  const { onSuccess, ...restConfig } = mutationConfig || {};
+
+  return useMutation({
+    onSuccess: (...args) => {
+      queryClient.invalidateQueries({
+        queryKey: getDiscussionsQueryOptions().queryKey,
+      });
+      onSuccess?.(...args);
+    },
+    ...restConfig,
+    mutationFn: createDiscussion,
+  });
+};
+```
+
+</CodeGroup>
+
+The query file (`get-discussions.ts`) exports a `queryOptions` factory alongside the hook so that other parts of the app — such as route loaders or prefetch calls — can reuse the same query key and function without duplicating logic. The mutation file (`create-discussion.ts`) invalidates the related query on success, keeping the cached list in sync automatically.
+
+## How to create a new API request
+
+<Steps>
+  <Step title="Create the file">
+    Add a new file inside `src/features/<feature>/api/`. Name it after the operation, for example `get-comments.ts` or `delete-comment.ts`.
+  </Step>
+  <Step title="Define the schema and types">
+    For mutations, write a Zod schema and infer the input type from it. For queries, import the relevant types from `@/types/api`.
+
+    ```typescript
+    import { z } from 'zod';
+
+    export const createCommentInputSchema = z.object({
+      body: z.string().min(1, 'Required'),
+    });
+
+    export type CreateCommentInput = z.infer<typeof createCommentInputSchema>;
+    ```
+  </Step>
+  <Step title="Write the fetcher function">
+    Call `api` with the correct HTTP method and endpoint. Return a typed promise.
+
+    ```typescript
+    import { api } from '@/lib/api-client';
+    import { Comment } from '@/types/api';
+
+    export const createComment = ({
+      data,
+      discussionId,
+    }: {
+      data: CreateCommentInput;
+      discussionId: string;
+    }): Promise<Comment> => {
+      return api.post(`/discussions/${discussionId}/comments`, data);
+    };
+    ```
+  </Step>
+  <Step title="Add the React Query hook">
+    Wrap the fetcher with `useQuery` or `useMutation`. For mutations, invalidate related queries in `onSuccess`.
+
+    ```typescript
+    import { useMutation, useQueryClient } from '@tanstack/react-query';
+    import { MutationConfig } from '@/lib/react-query';
+
+    type UseCreateCommentOptions = {
+      mutationConfig?: MutationConfig<typeof createComment>;
+      discussionId: string;
+    };
+
+    export const useCreateComment = ({
+      mutationConfig,
+      discussionId,
+    }: UseCreateCommentOptions) => {
+      const queryClient = useQueryClient();
+
+      return useMutation({
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['comments', discussionId] });
+        },
+        ...mutationConfig,
+        mutationFn: (data) => createComment({ data, discussionId }),
+      });
+    };
+    ```
+  </Step>
+  <Step title="Use the hook in a component">
+    Import and call the hook. Access `data`, `isLoading`, and `error` directly — no manual fetch or state management needed.
+
+    ```tsx
+    const createComment = useCreateComment({ discussionId });
+
+    createComment.mutate({ body: 'Great discussion!' });
+    ```
+  </Step>
+</Steps>
+
+## REST vs GraphQL clients
+
+Bulletproof React ships with Axios for REST. If your backend uses GraphQL, swap the client library while keeping the same file structure — one file per operation, same three-part declaration pattern.
+
+<Tabs>
+  <Tab title="REST (Axios)">
+    The default setup uses Axios configured in `src/lib/api-client.ts`. Fetcher functions call `api.get`, `api.post`, `api.put`, or `api.delete`.
+
+    ```typescript
+    import { api } from '@/lib/api-client';
+    import { Discussion } from '@/types/api';
+
+    export const getDiscussion = (id: string): Promise<Discussion> => {
+      return api.get(`/discussions/${id}`);
+    };
+    ```
+  </Tab>
+  <Tab title="GraphQL (graphql-request)">
+    Replace the Axios instance with a `GraphQLClient` configured with your endpoint and headers. Fetcher functions use `gql` tagged template literals and pass them to `client.request`.
+
+    ```typescript
+    import { GraphQLClient, gql } from 'graphql-request';
+
+    import { env } from '@/config/env';
+
+    export const gqlClient = new GraphQLClient(env.API_URL, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+
+    const GET_DISCUSSION = gql`
+      query GetDiscussion($id: ID!) {
+        discussion(id: $id) {
+          id
+          title
+          body
+          createdAt
+        }
+      }
+    `;
+
+    export const getDiscussion = (id: string) => {
+      return gqlClient.request(GET_DISCUSSION, { id });
+    };
+    ```
+  </Tab>
+</Tabs>

@@ -1,0 +1,80 @@
+---
+title: "Deploying your React application to production"
+description: "Explore CDN deployment options for React SPAs, compare hosting platforms, and learn how to build each app flavor for a production release."
+---
+
+Deploying a React single-page application correctly means more than running a build command. You need to serve your assets from a location that delivers them quickly to users worldwide, handle client-side routing properly, and keep your build configuration reproducible. This page covers the deployment options available to you and how to build each app flavor in the Bulletproof React project.
+
+## CDN deployment
+
+For React SPAs, serving your built assets over a Content Delivery Network (CDN) is the most important infrastructure decision you can make. A CDN stores copies of your static files — HTML, JavaScript, CSS, and images — on servers distributed around the world. When a user visits your application, they download assets from a node geographically close to them rather than from a single origin server.
+
+This matters for React applications because:
+
+- The entire application shell (HTML, JS, CSS) must be downloaded before the user sees anything interactive.
+- Reducing the physical distance between the user and the asset server directly lowers Time to First Byte (TTFB) and therefore Largest Contentful Paint (LCP).
+- CDNs cache assets at the edge, reducing load on your origin and improving availability.
+
+<Note>
+Configure your CDN to serve your `index.html` for all routes that do not match a static file. React Router handles routing on the client side, so every path must return the same HTML entry point.
+</Note>
+
+## Deployment platforms
+
+The following platforms provide built-in CDN delivery and are well suited for hosting React SPAs.
+
+<CardGroup cols={2}>
+  <Card title="Vercel" icon="triangle" href="https://vercel.com/">
+    Zero-configuration deployments with automatic CDN distribution, preview deployments per branch, and native support for React frameworks including Next.js.
+  </Card>
+  <Card title="Netlify" icon="globe" href="https://www.netlify.com/">
+    Git-connected deployments with a global CDN, instant rollbacks, and built-in support for redirects and custom headers needed for SPA routing.
+  </Card>
+  <Card title="AWS CloudFront" icon="cloud" href="https://aws.amazon.com/cloudfront/">
+    Amazon's CDN service, typically paired with S3 for asset storage. Offers fine-grained control over caching, security headers, and edge functions.
+  </Card>
+  <Card title="Cloudflare CDN" icon="shield" href="https://www.cloudflare.com/en-gb/cdn/">
+    High-performance global CDN with DDoS protection, edge workers, and automatic asset compression included across all plans.
+  </Card>
+</CardGroup>
+
+## Build setup
+
+Each app flavor has its own build script. Navigate into the app directory and run the build command from there.
+
+<Tabs>
+  <Tab title="React Vite">
+    The React Vite app uses Vite to produce an optimized static bundle in the `dist/` directory.
+
+    ```bash
+    cd apps/react-vite
+    yarn build
+    ```
+
+    After the build completes, upload the contents of `apps/react-vite/dist/` to your CDN or static hosting provider. The build script runs `tsc && vite build` to type-check before bundling.
+  </Tab>
+  <Tab title="Next.js App Router">
+    The Next.js App Router app builds with the standard Next.js build pipeline.
+
+    ```bash
+    cd apps/nextjs-app
+    yarn build
+    ```
+
+    You can deploy the output to Vercel directly, or export a static build by setting `output: 'export'` in `next.config.mjs` for fully static CDN hosting.
+  </Tab>
+  <Tab title="Next.js Pages Router">
+    The Next.js Pages Router app uses the same build command as the App Router variant.
+
+    ```bash
+    cd apps/nextjs-pages
+    yarn build
+    ```
+
+    As with the App Router variant, set `output: 'export'` in `next.config.mjs` if you want to serve purely static files from a CDN without a Node.js server.
+  </Tab>
+</Tabs>
+
+<Note>
+Set long-lived cache headers (for example, `Cache-Control: public, max-age=31536000, immutable`) on your hashed JavaScript and CSS assets. Vite and Next.js include a content hash in asset filenames, so cached files are automatically invalidated when content changes.
+</Note>

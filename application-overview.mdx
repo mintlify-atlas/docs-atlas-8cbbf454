@@ -1,0 +1,188 @@
+---
+title: "Application overview: the Bulletproof React sample app"
+description: "Explore the sample team discussion application — its data model, user roles, and how to run each of the three supported app flavors locally."
+---
+
+The Bulletproof React sample application is a team discussion platform. Users can create teams, invite others to join, and start discussions on different topics with their teammates. It is intentionally simple so you can focus on the architectural patterns rather than business logic. You can try it on the [live demo](https://bulletproof-react-app.netlify.app).
+
+## Data model
+
+The application is built around four core models. A team is created automatically during registration if you choose not to join an existing one — and the registering user becomes the team admin.
+
+<AccordionGroup>
+  <Accordion title="User">
+    A user belongs to one team and has one of two roles: `ADMIN` or `USER`. The role controls what actions the user can perform within the application.
+
+    **`ADMIN` role can:**
+    - Create, edit, and delete discussions
+    - Create and delete any comment in a discussion
+    - Delete users from the team
+    - Edit their own profile
+
+    **`USER` role can:**
+    - Create and delete their own comments
+    - Edit their own profile
+  </Accordion>
+  <Accordion title="Team">
+    A team has exactly one admin and any number of members. All members of a team can participate in the team's discussions. A team is created during registration when the user does not join an existing team.
+  </Accordion>
+  <Accordion title="Discussion">
+    A discussion is created by a team member and represents a topic of conversation within the team. Only users with the `ADMIN` role can edit or delete discussions.
+  </Accordion>
+  <Accordion title="Comment">
+    A comment represents a single message posted inside a discussion. Any team member can create a comment. Users with the `ADMIN` role can delete any comment; users with the `USER` role can only delete their own comments.
+  </Accordion>
+</AccordionGroup>
+
+## Getting started
+
+The sample application is available in three flavors that share the same data model and features. Choose the one that matches your preferred rendering model and follow the steps below.
+
+<Tabs>
+  <Tab title="React Vite">
+    A client-side React application built with Vite.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    <Steps>
+      <Step title="Clone the repository">
+        ```bash
+        git clone https://github.com/alan2207/bulletproof-react.git
+        cd bulletproof-react
+        ```
+      </Step>
+      <Step title="Navigate to the app directory">
+        ```bash
+        cd apps/react-vite
+        ```
+      </Step>
+      <Step title="Copy the environment file">
+        ```bash
+        cp .env.example .env
+        ```
+      </Step>
+      <Step title="Install dependencies">
+        ```bash
+        yarn install
+        ```
+      </Step>
+      <Step title="Start the development server">
+        ```bash
+        yarn dev
+        ```
+
+        Open [http://localhost:3000](http://localhost:3000) to view the app in the browser.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Next.js App Router">
+    A Next.js application using the App Router introduced in Next.js 13.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    <Steps>
+      <Step title="Clone the repository">
+        ```bash
+        git clone https://github.com/alan2207/bulletproof-react.git
+        cd bulletproof-react
+        ```
+      </Step>
+      <Step title="Navigate to the app directory">
+        ```bash
+        cd apps/nextjs-app
+        ```
+      </Step>
+      <Step title="Copy the environment file">
+        ```bash
+        cp .env.example .env
+        ```
+      </Step>
+      <Step title="Install dependencies">
+        ```bash
+        yarn install
+        ```
+      </Step>
+      <Step title="Start the mock server">
+        The Next.js apps require a running mock API server. Start it before the development server.
+
+        ```bash
+        yarn run-mock-server
+        ```
+
+        The mock server runs on [http://localhost:8080/api](http://localhost:8080/api).
+      </Step>
+      <Step title="Start the development server">
+        In a separate terminal:
+
+        ```bash
+        yarn dev
+        ```
+
+        Open [http://localhost:3000](http://localhost:3000) to view the app in the browser.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Next.js Pages Router">
+    A Next.js application using the classic Pages Router. The `pages/` directory re-exports Next.js page files from the `src/app/` application layer so all feature code stays co-located.
+
+    **Prerequisites:** Node 20+ and Yarn 1.22+
+
+    <Steps>
+      <Step title="Clone the repository">
+        ```bash
+        git clone https://github.com/alan2207/bulletproof-react.git
+        cd bulletproof-react
+        ```
+      </Step>
+      <Step title="Navigate to the app directory">
+        ```bash
+        cd apps/nextjs-pages
+        ```
+      </Step>
+      <Step title="Copy the environment file">
+        ```bash
+        cp .env.example .env
+        ```
+      </Step>
+      <Step title="Install dependencies">
+        ```bash
+        yarn install
+        ```
+      </Step>
+      <Step title="Start the mock server">
+        The Next.js apps require a running mock API server. Start it before the development server.
+
+        ```bash
+        yarn run-mock-server
+        ```
+
+        The mock server runs on [http://localhost:8080/api](http://localhost:8080/api).
+      </Step>
+      <Step title="Start the development server">
+        In a separate terminal:
+
+        ```bash
+        yarn dev
+        ```
+
+        Open [http://localhost:3000](http://localhost:3000) to view the app in the browser.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## App variants
+
+Each variant implements the same application with the same data model and feature set. Browse the source for the flavor you are working with:
+
+<CardGroup cols={3}>
+  <Card title="React Vite" icon="bolt" href="https://github.com/alan2207/bulletproof-react/tree/master/apps/react-vite">
+    Client-side SPA using Vite, React Router, and MSW for mocked API responses.
+  </Card>
+  <Card title="Next.js App Router" icon="layer-group" href="https://github.com/alan2207/bulletproof-react/tree/master/apps/nextjs-app">
+    Server and client components with the Next.js 13+ App Router and a separate mock server.
+  </Card>
+  <Card title="Next.js Pages Router" icon="file-code" href="https://github.com/alan2207/bulletproof-react/tree/master/apps/nextjs-pages">
+    Classic Next.js Pages Router with co-located feature modules and a separate mock server.
+  </Card>
+</CardGroup>

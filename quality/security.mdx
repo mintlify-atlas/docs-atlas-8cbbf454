@@ -1,0 +1,383 @@
+---
+title: "Authentication and authorization in Bulletproof React"
+description: "Learn how to implement authentication, role-based and permission-based authorization, and XSS protection in your Bulletproof React application."
+---
+
+Client-side security in Bulletproof React covers three areas: authenticating users with JWT tokens stored securely, authorising access to resources using role-based and permission-based rules, and protecting against XSS by sanitising all user-generated content before rendering it. Each layer works together to reduce the attack surface of your application.
+
+<Note>
+Client-side authentication improves user experience and enforces access rules in the browser, but it must always be backed by server-side validation. Never rely solely on client-side checks to protect sensitive resources.
+</Note>
+
+## Authentication
+
+Authentication verifies who the user is. In single-page applications, the standard approach is to use JSON Web Tokens ([JWT](https://jwt.io/)). When a user logs in or registers, the server issues a token that is stored in the application and sent with every subsequent request.
+
+### Token storage
+
+The most secure in-memory approach is to keep the token in application state, but the token is lost when the user refreshes the page. To persist authentication across reloads, you must store the token in either `localStorage`/`sessionStorage` or a cookie.
+
+<Warning>
+Avoid storing authentication tokens in `localStorage`. Any JavaScript running on your page — including injected scripts from XSS vulnerabilities — can read `localStorage` values and steal the token. Prefer `HttpOnly` cookies, which are inaccessible to client-side JavaScript.
+</Warning>
+
+Bulletproof React uses `js-cookie` to manage cookies, assuming a real API would issue the token with the `HttpOnly` and `Secure` attributes set server-side.
+
+### Auth configuration
+
+The application wires authentication using `react-query-auth`, which manages the user state as a React Query query. You provide four functions — `userFn`, `loginFn`, `registerFn`, and `logoutFn` — and the library handles caching, loading states, and refetching automatically.
+
+```tsx src/lib/auth.tsx
+import { configureAuth } from 'react-query-auth';
+import { Navigate, useLocation } from 'react-router';
+import { z } from 'zod';
+
+import { paths } from '@/config/paths';
+import { AuthResponse, User } from '@/types/api';
+
+import { api } from './api-client';
+
+const getUser = async (): Promise<User> => {
+  const response = await api.get('/auth/me');
+  return response.data;
+};
+
+const logout = (): Promise<void> => {
+  return api.post('/auth/logout');
+};
+
+export const loginInputSchema = z.object({
+  email: z.string().min(1, 'Required').email('Invalid email'),
+  password: z.string().min(5, 'Required'),
+});
+
+export type LoginInput = z.infer<typeof loginInputSchema>;
+const loginWithEmailAndPassword = (data: LoginInput): Promise<AuthResponse> => {
+  return api.post('/auth/login', data);
+};
+
+export const registerInputSchema = z
+  .object({
+    email: z.string().min(1, 'Required'),
+    firstName: z.string().min(1, 'Required'),
+    lastName: z.string().min(1, 'Required'),
+    password: z.string().min(5, 'Required'),
+  })
+  .and(
+    z
+      .object({
+        teamId: z.string().min(1, 'Required'),
+        teamName: z.null().default(null),
+      })
+      .or(
+        z.object({
+          teamName: z.string().min(1, 'Required'),
+          teamId: z.null().default(null),
+        }),
+      ),
+  );
+
+export type RegisterInput = z.infer<typeof registerInputSchema>;
+
+const registerWithEmailAndPassword = (
+  data: RegisterInput,
+): Promise<AuthResponse> => {
+  return api.post('/auth/register', data);
+};
+
+const authConfig = {
+  userFn: getUser,
+  loginFn: async (data: LoginInput) => {
+    const response = await loginWithEmailAndPassword(data);
+    return response.user;
+  },
+  registerFn: async (data: RegisterInput) => {
+    const response = await registerWithEmailAndPassword(data);
+    return response.user;
+  },
+  logoutFn: logout,
+};
+
+export const { useUser, useLogin, useLogout, useRegister, AuthLoader } =
+  configureAuth(authConfig);
+
+export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const user = useUser();
+  const location = useLocation();
+
+  if (!user.data) {
+    return (
+      <Navigate to={paths.auth.login.getHref(location.pathname)} replace />
+    );
+  }
+
+  return children;
+};
+```
+
+The application considers a user authenticated as long as a user object is present in the query cache. The `ProtectedRoute` component redirects unauthenticated users to the login page, preserving the intended destination in the URL so they return there after logging in.
+
+## Authorization
+
+Authorization verifies what an authenticated user is allowed to do. Bulletproof React supports two models: Role-Based Access Control (RBAC) for coarse-grained permissions and Permission-Based Access Control (PBAC) for fine-grained, resource-level rules.
+
+Both models use the same `Authorization` component from `src/lib/authorization.tsx`. You provide either `allowedRoles` or `policyCheck`, and the component renders its children only when the check passes:
+
+```tsx src/lib/authorization.tsx
+import * as React from 'react';
+
+import { Comment, User } from '@/types/api';
+
+import { useUser } from './auth';
+
+export enum ROLES {
+  ADMIN = 'ADMIN',
+  USER = 'USER',
+}
+
+type RoleTypes = keyof typeof ROLES;
+
+export const POLICIES = {
+  'comment:delete': (user: User, comment: Comment) => {
+    if (user.role === 'ADMIN') {
+      return true;
+    }
+
+    if (user.role === 'USER' && comment.author?.id === user.id) {
+      return true;
+    }
+
+    return false;
+  },
+};
+
+export const useAuthorization = () => {
+  const user = useUser();
+
+  if (!user.data) {
+    throw Error('User does not exist!');
+  }
+
+  const checkAccess = React.useCallback(
+    ({ allowedRoles }: { allowedRoles: RoleTypes[] }) => {
+      if (allowedRoles && allowedRoles.length > 0 && user.data) {
+        return allowedRoles?.includes(user.data.role);
+      }
+
+      return true;
+    },
+    [user.data],
+  );
+
+  return { checkAccess, role: user.data.role };
+};
+
+type AuthorizationProps = {
+  forbiddenFallback?: React.ReactNode;
+  children: React.ReactNode;
+} & (
+  | {
+      allowedRoles: RoleTypes[];
+      policyCheck?: never;
+    }
+  | {
+      allowedRoles?: never;
+      policyCheck: boolean;
+    }
+);
+
+export const Authorization = ({
+  policyCheck,
+  allowedRoles,
+  forbiddenFallback = null,
+  children,
+}: AuthorizationProps) => {
+  const { checkAccess } = useAuthorization();
+
+  let canAccess = false;
+
+  if (allowedRoles) {
+    canAccess = checkAccess({ allowedRoles });
+  }
+
+  if (typeof policyCheck !== 'undefined') {
+    canAccess = policyCheck;
+  }
+
+  return <>{canAccess ? children : forbiddenFallback}</>;
+};
+```
+
+<Tabs>
+  <Tab title="RBAC">
+    Role-Based Access Control restricts UI features based on the user's role. Roles such as `ADMIN` and `USER` are assigned when the user registers — creating a new team grants `ADMIN`, while joining an existing team grants `USER`.
+
+    Pass `allowedRoles` to the `Authorization` component to gate any piece of UI. In the example below, only `ADMIN` users see the **Create Discussion** button:
+
+    ```tsx src/features/discussions/components/create-discussion.tsx
+    import { Plus } from 'lucide-react';
+
+    import { Button } from '@/components/ui/button';
+    import { Form, FormDrawer, Input, Textarea } from '@/components/ui/form';
+    import { useNotifications } from '@/components/ui/notifications';
+    import { Authorization, ROLES } from '@/lib/authorization';
+
+    import {
+      createDiscussionInputSchema,
+      useCreateDiscussion,
+    } from '../api/create-discussion';
+
+    export const CreateDiscussion = () => {
+      const { addNotification } = useNotifications();
+      const createDiscussionMutation = useCreateDiscussion({
+        mutationConfig: {
+          onSuccess: () => {
+            addNotification({
+              type: 'success',
+              title: 'Discussion Created',
+            });
+          },
+        },
+      });
+
+      return (
+        <Authorization allowedRoles={[ROLES.ADMIN]}>
+          <FormDrawer
+            isDone={createDiscussionMutation.isSuccess}
+            triggerButton={
+              <Button size="sm" icon={<Plus className="size-4" />}>
+                Create Discussion
+              </Button>
+            }
+            title="Create Discussion"
+            submitButton={
+              <Button
+                form="create-discussion"
+                type="submit"
+                size="sm"
+                isLoading={createDiscussionMutation.isPending}
+              >
+                Submit
+              </Button>
+            }
+          >
+            <Form
+              id="create-discussion"
+              onSubmit={(values) => {
+                createDiscussionMutation.mutate({ data: values });
+              }}
+              schema={createDiscussionInputSchema}
+            >
+              {({ register, formState }) => (
+                <>
+                  <Input
+                    label="Title"
+                    error={formState.errors['title']}
+                    registration={register('title')}
+                  />
+                  <Textarea
+                    label="Body"
+                    error={formState.errors['body']}
+                    registration={register('body')}
+                  />
+                </>
+              )}
+            </Form>
+          </FormDrawer>
+        </Authorization>
+      );
+    };
+    ```
+  </Tab>
+
+  <Tab title="PBAC">
+    Permission-Based Access Control handles cases where role alone is not granular enough. A `USER` should only be able to delete their own comments, not those of other users, so a role check is insufficient.
+
+    Define policies as functions in `src/lib/authorization.tsx` and pass the result of calling them as `policyCheck`. The `comment:delete` policy grants access to `ADMIN` users unconditionally and to `USER` roles only when the comment belongs to them:
+
+    ```typescript src/lib/authorization.tsx
+    export const POLICIES = {
+      'comment:delete': (user: User, comment: Comment) => {
+        if (user.role === 'ADMIN') {
+          return true;
+        }
+
+        if (user.role === 'USER' && comment.author?.id === user.id) {
+          return true;
+        }
+
+        return false;
+      },
+    };
+    ```
+
+    Apply the policy in the comments list by passing `policyCheck` to `Authorization`:
+
+    ```tsx src/features/comments/components/comments-list.tsx
+    import { useUser } from '@/lib/auth';
+    import { POLICIES, Authorization } from '@/lib/authorization';
+    import { User } from '@/types/api';
+
+    export const CommentsList = ({ discussionId }: CommentsListProps) => {
+      const user = useUser();
+      // ...
+
+      return (
+        <ul aria-label="comments">
+          {comments.map((comment, index) => (
+            <li key={comment.id || index}>
+              <Authorization
+                policyCheck={POLICIES['comment:delete'](
+                  user.data as User,
+                  comment,
+                )}
+              >
+                <div className="flex justify-between">
+                  {/* date and author info */}
+                  <DeleteComment discussionId={discussionId} id={comment.id} />
+                </div>
+              </Authorization>
+
+              <MDPreview value={comment.body} />
+            </li>
+          ))}
+        </ul>
+      );
+    };
+    ```
+
+    The **Delete Comment** button is only rendered when the policy check returns `true`, so the action is invisible — and therefore inaccessible — to users who are not permitted to perform it.
+  </Tab>
+</Tabs>
+
+## XSS protection
+
+Cross-Site Scripting (XSS) attacks inject malicious scripts into your application by exploiting unsanitised user input. Any content created by users and rendered as HTML must be sanitised before display.
+
+Bulletproof React uses [DOMPurify](https://github.com/cure53/DOMPurify) to sanitise Markdown-rendered HTML before inserting it into the DOM. The `MDPreview` component is the canonical example:
+
+```tsx src/components/ui/md-preview/md-preview.tsx
+import createDOMPurify from 'dompurify';
+import { parse } from 'marked';
+
+const DOMPurify = createDOMPurify(window);
+
+export type MDPreviewProps = {
+  value: string;
+};
+
+export const MDPreview = ({ value = '' }: MDPreviewProps) => {
+  return (
+    <div
+      className="prose prose-slate w-full p-2"
+      dangerouslySetInnerHTML={{
+        __html: DOMPurify.sanitize(parse(value) as string),
+      }}
+    />
+  );
+};
+```
+
+`marked` converts the Markdown string to HTML, then `DOMPurify.sanitize` strips any dangerous tags and attributes before the result is passed to `dangerouslySetInnerHTML`. Never use `dangerouslySetInnerHTML` with unsanitised content.
+
+For a full list of client-side security risks, consult the [OWASP Top 10 Client-Side Security Risks](https://owasp.org/www-project-top-10-client-side-security-risks/).

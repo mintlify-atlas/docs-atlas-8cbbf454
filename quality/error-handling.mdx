@@ -1,0 +1,151 @@
+---
+title: "Error handling patterns for Bulletproof React apps"
+description: "Learn how to handle API errors, in-app errors, and production error tracking using interceptors, error boundaries, and Sentry integration."
+---
+
+Bulletproof React uses a layered approach to error handling. API errors are caught at the network layer by an Axios interceptor, component errors are contained by React error boundaries placed at multiple levels of the component tree, and production errors are tracked and reported by an external service such as Sentry. Each layer handles a different class of failure so that no single error can bring down the entire application.
+
+<Warning>
+Never silently swallow errors. If you catch an error and do nothing with it, failures become invisible to both users and developers. Always surface the error through a notification, an error boundary, or an error tracking service.
+</Warning>
+
+## Setting up error handling
+
+<Steps>
+  <Step title="Add an API error interceptor">
+    Configure your Axios instance with a response interceptor that displays a notification for every error and redirects unauthenticated users to the login page. See the [API errors](#api-errors) section below for the full implementation.
+  </Step>
+  <Step title="Add error boundaries to your route tree">
+    Wrap individual routes or feature areas in `<ErrorBoundary>` components. Avoid relying on a single top-level boundary — placing boundaries at multiple levels means an error in one section does not break the rest of the application.
+  </Step>
+  <Step title="Configure error tracking">
+    Integrate Sentry (or an equivalent service) to capture unhandled errors in production. Upload source maps so Sentry can map minified stack traces back to your source code.
+  </Step>
+</Steps>
+
+## API errors
+
+When an API request fails, your application needs to inform the user and handle specific HTTP status codes. A response interceptor on your Axios instance is the right place to centralise this logic.
+
+The interceptor in `src/lib/api-client.ts` does three things on every error response:
+
+1. Extracts a human-readable message from the response body or the Axios error object.
+2. Adds an error notification so the user sees what went wrong.
+3. Redirects to the login page when the server returns a `401 Unauthorized` status.
+
+```typescript src/lib/api-client.ts
+import Axios, { InternalAxiosRequestConfig } from 'axios';
+
+import { useNotifications } from '@/components/ui/notifications';
+import { env } from '@/config/env';
+import { paths } from '@/config/paths';
+
+function authRequestInterceptor(config: InternalAxiosRequestConfig) {
+  if (config.headers) {
+    config.headers.Accept = 'application/json';
+  }
+
+  config.withCredentials = true;
+  return config;
+}
+
+export const api = Axios.create({
+  baseURL: env.API_URL,
+});
+
+api.interceptors.request.use(authRequestInterceptor);
+api.interceptors.response.use(
+  (response) => {
+    return response.data;
+  },
+  (error) => {
+    const message = error.response?.data?.message || error.message;
+    useNotifications.getState().addNotification({
+      type: 'error',
+      title: 'Error',
+      message,
+    });
+
+    if (error.response?.status === 401) {
+      const searchParams = new URLSearchParams();
+      const redirectTo =
+        searchParams.get('redirectTo') || window.location.pathname;
+      window.location.href = paths.auth.login.getHref(redirectTo);
+    }
+
+    return Promise.reject(error);
+  },
+);
+```
+
+The request interceptor sets `withCredentials: true` so cookies are sent with every cross-origin request, which is required for cookie-based authentication to work correctly.
+
+## In-app errors
+
+React error boundaries catch JavaScript errors thrown during rendering and prevent them from crashing the entire application. When a component inside a boundary throws, React renders the boundary's fallback UI instead of the broken subtree.
+
+<Note>
+Place multiple error boundaries at different levels of your component tree rather than relying on a single application-level boundary. This way, an error in the comments section of a discussion page does not take down the discussion header or the sidebar navigation.
+</Note>
+
+A practical pattern is to wrap each route with its own error boundary so that navigation remains functional even when a specific page fails:
+
+```tsx src/app/routes/app/discussions/discussion.tsx
+import { ErrorBoundary } from 'react-error-boundary';
+
+export const DiscussionRoute = () => {
+  return (
+    <ErrorBoundary
+      fallback={
+        <div>
+          <h2>Something went wrong loading this discussion.</h2>
+        </div>
+      }
+    >
+      <Discussion />
+    </ErrorBoundary>
+  );
+};
+```
+
+You can also use the `onError` prop to log errors to your error tracking service directly from the boundary:
+
+```tsx
+<ErrorBoundary
+  onError={(error, info) => {
+    Sentry.captureException(error, { extra: info });
+  }}
+  fallback={<ErrorFallback />}
+>
+  <YourFeature />
+</ErrorBoundary>
+```
+
+## Error tracking
+
+In production, errors need to be captured and reported even when users do not report them. [Sentry](https://sentry.io/) is the recommended tool for this.
+
+Sentry automatically captures unhandled exceptions, records the browser, OS, and user context, and lets you view the original source location when you upload source maps.
+
+Install the Sentry SDK and initialise it at your application entry point:
+
+```typescript src/main.tsx
+import * as Sentry from '@sentry/react';
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN,
+  integrations: [
+    Sentry.browserTracingIntegration(),
+    Sentry.replayIntegration(),
+  ],
+  tracesSampleRate: 1.0,
+  replaysOnErrorSampleRate: 1.0,
+});
+```
+
+Upload source maps as part of your build pipeline so Sentry can map minified stack traces back to your original TypeScript source:
+
+```bash
+npx @sentry/cli sourcemaps inject ./dist
+npx @sentry/cli sourcemaps upload ./dist
+```

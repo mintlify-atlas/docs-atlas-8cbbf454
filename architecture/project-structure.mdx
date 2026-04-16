@@ -1,0 +1,189 @@
+---
+title: 'Project structure: feature-based architecture'
+description: 'Learn how Bulletproof React organizes code into feature modules, enforces import boundaries, and maintains a unidirectional dependency flow.'
+---
+
+Bulletproof React organizes most application code around features rather than file types. Instead of grouping all components together or all hooks together across the whole app, each feature owns its own components, hooks, stores, and utilities. This keeps related code colocated, reduces cross-feature coupling, and makes the codebase easier to scale and maintain as new features are added.
+
+## Top-level `src/` structure
+
+The `src/` folder is divided into a small set of named directories, each with a specific role:
+
+```sh
+src
+|
++-- app               # application layer containing:
+|   |                 # this folder might differ based on the meta framework used
+|   +-- routes        # application routes / can also be pages
+|   +-- app.tsx       # main application component
+|   +-- provider.tsx  # application provider that wraps the entire application with different global providers - this might also differ based on meta framework used
+|   +-- router.tsx    # application router configuration
++-- assets            # assets folder can contain all the static files such as images, fonts, etc.
+|
++-- components        # shared components used across the entire application
+|
++-- config            # global configurations, exported env variables etc.
+|
++-- features          # feature based modules
+|
++-- hooks             # shared hooks used across the entire application
+|
++-- lib               # reusable libraries preconfigured for the application
+|
++-- stores            # global state stores
+|
++-- testing           # test utilities and mocks
+|
++-- types             # shared types used across the application
+|
++-- utils             # shared utility functions
+```
+
+| Folder | Purpose |
+|---|---|
+| `app/` | Application entry point, routing, and global providers. Its shape may vary by meta-framework (Next.js, Remix, etc.). |
+| `assets/` | Static files such as images and fonts shared across the application. |
+| `components/` | Shared UI components used in more than one feature. |
+| `config/` | Global configuration and environment variables exported for the rest of the app. |
+| `features/` | Self-contained feature modules — the primary home for new business logic. |
+| `hooks/` | Shared React hooks reused across features. |
+| `lib/` | Third-party library wrappers preconfigured for the application. |
+| `stores/` | Global state stores (e.g. Zustand, Jotai). |
+| `testing/` | Test utilities, mocks, and test helpers. |
+| `types/` | TypeScript types shared across the entire application. |
+| `utils/` | Shared pure utility functions. |
+
+## Feature folder structure
+
+Each feature lives under `src/features/` and mirrors the top-level structure, scoping everything to that feature:
+
+```sh
+src/features/awesome-feature
+|
++-- api         # exported API request declarations and api hooks related to a specific feature
+|
++-- assets      # assets folder can contain all the static files for a specific feature
+|
++-- components  # components scoped to a specific feature
+|
++-- hooks       # hooks scoped to a specific feature
+|
++-- stores      # state stores for a specific feature
+|
++-- types       # typescript types used within the feature
+|
++-- utils       # utility functions for a specific feature
+```
+
+<Note>
+You don't need all of these folders for every feature. Only include the ones that are necessary for the feature.
+</Note>
+
+<Tip>
+In some cases it may be more practical to keep all API calls outside the `features/` folders in a dedicated top-level `api/` folder. This is useful when many features share the same API calls.
+</Tip>
+
+### Avoid barrel files
+
+In the past it was common to create an `index.ts` at the root of each feature that re-exported everything. Avoid this pattern — Vite cannot tree-shake barrel files reliably, which can cause noticeable performance regressions. Import files directly instead.
+
+## Cross-feature import rules
+
+Importing directly from one feature into another creates hidden coupling that makes features harder to move, test, or delete independently. Instead, compose features at the application level in `src/app/`.
+
+To catch cross-feature imports automatically, add the following rule to your ESLint config:
+
+```js
+'import/no-restricted-paths': [
+  'error',
+  {
+    zones: [
+      // disables cross-feature imports:
+      // eg. src/features/discussions should not import from src/features/comments, etc.
+      {
+        target: './src/features/auth',
+        from: './src/features',
+        except: ['./auth'],
+      },
+      {
+        target: './src/features/comments',
+        from: './src/features',
+        except: ['./comments'],
+      },
+      {
+        target: './src/features/discussions',
+        from: './src/features',
+        except: ['./discussions'],
+      },
+      {
+        target: './src/features/teams',
+        from: './src/features',
+        except: ['./teams'],
+      },
+      {
+        target: './src/features/users',
+        from: './src/features',
+        except: ['./users'],
+      },
+
+      // More restrictions...
+    ],
+  },
+],
+```
+
+Add a zone entry for each feature you add to the project. The `except` array names the one subdirectory each feature is allowed to import from — itself.
+
+## Unidirectional codebase architecture
+
+Beyond feature isolation, the overall codebase follows a strict one-way dependency flow:
+
+```
+shared (components, hooks, lib, types, utils)
+        ↓
+   features
+        ↓
+       app
+```
+
+Shared modules can be used anywhere. Features can import from shared modules but not from `app/`. The `app/` layer can import from features and shared modules, but nothing imports back up the chain. This makes the codebase predictable: you always know which direction dependencies run.
+
+Enforce the unidirectional rule with ESLint alongside the cross-feature restrictions:
+
+```js
+'import/no-restricted-paths': [
+  'error',
+  {
+    zones: [
+      // Previous cross-feature restrictions...
+
+      // enforce unidirectional codebase:
+      // e.g. src/app can import from src/features but not the other way around
+      {
+        target: './src/features',
+        from: './src/app',
+      },
+
+      // e.g src/features and src/app can import from these shared modules but not the other way around
+      {
+        target: [
+          './src/components',
+          './src/hooks',
+          './src/lib',
+          './src/types',
+          './src/utils',
+        ],
+        from: ['./src/features', './src/app'],
+      },
+    ],
+  },
+],
+```
+
+<Note>
+The full combined ESLint config, with both cross-feature and unidirectional rules, lives in `apps/react-vite/.eslintrc.cjs`. You can use it as a starting point and extend it with your own feature zones.
+</Note>
+
+<Tip>
+This architecture applies equally well to apps built with Next.js, Remix, or React Native. The folder names remain the same; only the `app/` layer shape changes to fit the meta-framework's conventions.
+</Tip>

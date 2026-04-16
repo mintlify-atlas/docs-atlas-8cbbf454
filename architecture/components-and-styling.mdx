@@ -1,0 +1,275 @@
+---
+title: 'Components and styling: patterns and libraries'
+description: 'Learn how to write maintainable React components, choose a component library, pick a styling solution, and develop UI in isolation with Storybook.'
+---
+
+Well-structured components are the foundation of a maintainable React codebase. Bulletproof React follows a set of practical component authoring practices — keeping logic colocated, composing rather than nesting, and abstracting shared UI into a component library. These patterns work with any component library or styling solution you choose.
+
+## Component best practices
+
+### Colocate things as close as possible to where they are used
+
+Keep components, functions, styles, and state as close as possible to where they are used. This improves readability and can improve runtime performance by reducing unnecessary re-renders when state updates.
+
+### Avoid large components with nested rendering functions
+
+Do not define multiple rendering functions inside a single component. As the component grows, inner render functions become difficult to follow and impossible to reuse. Extract any piece of UI that can stand alone as a separate component:
+
+```tsx
+// this is very difficult to maintain as soon as the component starts growing
+function Component() {
+  function renderItems() {
+    return <ul>...</ul>;
+  }
+  return <div>{renderItems()}</div>;
+}
+
+// extract it in a separate component
+function Items() {
+  return <ul>...</ul>;
+}
+
+function Component() {
+  return (
+    <div>
+      <Items />
+    </div>
+  );
+}
+```
+
+### Stay consistent
+
+Apply the same conventions everywhere. Use linters and formatters to enforce naming, import order, and formatting automatically rather than relying on code review to catch inconsistencies.
+
+### Limit the number of props a component accepts
+
+A component that accepts many props is often doing too much. If you find yourself adding prop after prop, consider splitting the component or using composition via `children` or slots instead.
+
+The `ConfirmationDialog` component demonstrates the composition pattern — it accepts `triggerButton` and `confirmButton` as React elements rather than a long list of handler props:
+
+```tsx
+export type ConfirmationDialogProps = {
+  triggerButton: React.ReactElement;
+  confirmButton: React.ReactElement;
+  title: string;
+  body?: string;
+  cancelButtonText?: string;
+  icon?: 'danger' | 'info';
+  isDone?: boolean;
+};
+
+export const ConfirmationDialog = ({
+  triggerButton,
+  confirmButton,
+  title,
+  body = '',
+  cancelButtonText = 'Cancel',
+  icon = 'danger',
+  isDone = false,
+}: ConfirmationDialogProps) => {
+  const { close, open, isOpen } = useDisclosure();
+  const cancelButtonRef = React.useRef(null);
+
+  useEffect(() => {
+    if (isDone) {
+      close();
+    }
+  }, [isDone, close]);
+
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) {
+          close();
+        } else {
+          open();
+        }
+      }}
+    >
+      <DialogTrigger asChild>{triggerButton}</DialogTrigger>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader className="flex">
+          <DialogTitle className="flex items-center gap-2">
+            {icon === 'danger' && (
+              <CircleAlert className="size-6 text-red-600" aria-hidden="true" />
+            )}
+            {icon === 'info' && (
+              <Info className="size-6 text-blue-600" aria-hidden="true" />
+            )}
+            {title}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
+          {body && (
+            <div className="mt-2">
+              <p>{body}</p>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          {confirmButton}
+          <Button ref={cancelButtonRef} variant="outline" onClick={close}>
+            {cancelButtonText}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+```
+
+### Abstract shared components into a component library
+
+For larger projects, build abstractions around all shared UI components. A consistent internal library makes the application easier to maintain and ensures the same design decisions are applied everywhere. Identify repetitions first — create abstractions only once a pattern is clearly established.
+
+The `Button` component shows how `cva` (class-variance-authority) is used to define variants and sizes in one place, keeping all button styling centralized:
+
+```tsx
+import { Slot } from '@radix-ui/react-slot';
+import { cva, type VariantProps } from 'class-variance-authority';
+import * as React from 'react';
+
+import { cn } from '@/utils/cn';
+
+import { Spinner } from '../spinner';
+
+const buttonVariants = cva(
+  'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+  {
+    variants: {
+      variant: {
+        default:
+          'bg-primary text-primary-foreground shadow hover:bg-primary/90',
+        destructive:
+          'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
+        outline:
+          'border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground',
+        secondary:
+          'bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80',
+        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        link: 'text-primary underline-offset-4 hover:underline',
+      },
+      size: {
+        default: 'h-9 px-4 py-2',
+        sm: 'h-8 rounded-md px-3 text-xs',
+        lg: 'h-10 rounded-md px-8',
+        icon: 'size-9',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+      size: 'default',
+    },
+  },
+);
+
+export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean;
+    isLoading?: boolean;
+    icon?: React.ReactNode;
+  };
+
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, children, isLoading, icon, ...props }, ref) => {
+    const Comp = asChild ? Slot : 'button';
+    return (
+      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props}>
+        {isLoading && <Spinner size="sm" className="text-current" />}
+        {!isLoading && icon && <span className="mr-2">{icon}</span>}
+        <span className="mx-2">{children}</span>
+      </Comp>
+    );
+  },
+);
+Button.displayName = 'Button';
+
+export { Button, buttonVariants };
+```
+
+Wrap third-party components in your own abstractions as well. The `Link` component wraps `react-router`'s `Link` with a consistent default style, so you can change the underlying library later without touching every call site:
+
+```tsx
+import { Link as RouterLink, LinkProps } from 'react-router';
+
+import { cn } from '@/utils/cn';
+
+export const Link = ({ className, children, ...props }: LinkProps) => {
+  return (
+    <RouterLink
+      className={cn('text-slate-600 hover:text-slate-900', className)}
+      {...props}
+    >
+      {children}
+    </RouterLink>
+  );
+};
+```
+
+## Component libraries
+
+Every project needs common UI pieces like modals, menus, and tabs. Use a battle-tested library rather than building them from scratch.
+
+<Tabs>
+  <Tab title="Fully featured">
+    Fully featured libraries ship components with styles already applied. They are faster to prototype with, but adapting them to a custom design system can require extra effort.
+
+    - **[Chakra UI](https://chakra-ui.com/)** — great developer experience, fast prototyping, accessible out of the box, highly customizable.
+    - **[AntD](https://ant.design/)** — wide component selection, well suited for admin dashboards. Custom styling can be difficult.
+    - **[MUI](https://mui.com/material-ui/)** — the most widely used React component library. Can be used as a fully styled Material Design implementation or as an unstyled headless library.
+    - **[Mantine](https://mantine.dev/)** — modern library with a large component and hook set, very customizable with many features out of the box.
+  </Tab>
+  <Tab title="Headless">
+    Headless libraries provide the behavior and accessibility of each component without any styles. If you have a custom design system, headless components are often easier to style correctly than overriding an existing fully featured library.
+
+    - **[Radix UI](https://www.radix-ui.com/)**
+    - **[Headless UI](https://headlessui.dev/)**
+    - **[react-aria](https://react-spectrum.adobe.com/react-aria/)**
+    - **[Ark UI](https://ark-ui.com/)**
+    - **[Reakit](https://reakit.io/)**
+
+    <Tip>
+      With the rise of headless libraries, a new tier has emerged: copy-paste component collections like **[ShadCN UI](https://ui.shadcn.com/)** and **[Park UI](https://park-ui.com/)**. These provide pre-built components with a styling solution included, but as editable source code in your project rather than an installed package. This gives you full control over customization.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Styling solutions
+
+<CardGroup cols={2}>
+  <Card title="Tailwind CSS" icon="wind" href="https://tailwindcss.com/">
+    Utility-first CSS framework. Compose styles directly in JSX with small, single-purpose classes. No context switching between files.
+  </Card>
+  <Card title="CSS Modules" icon="file-css" href="https://github.com/css-modules/css-modules">
+    Scoped CSS files colocated with components. Familiar syntax, zero runtime cost, no style leakage.
+  </Card>
+  <Card title="vanilla-extract" icon="flask" href="https://github.com/seek-oss/vanilla-extract">
+    Type-safe CSS-in-TypeScript with zero runtime. Styles are generated at build time.
+  </Card>
+  <Card title="Panda CSS" icon="panda" href="https://panda-css.com/">
+    Type-safe, design-token-aware CSS-in-JS with zero runtime overhead.
+  </Card>
+  <Card title="styled-components" icon="paintbrush" href="https://styled-components.com/">
+    CSS-in-JS with a component-centric API. Styles are co-located with the component and support dynamic theming.
+  </Card>
+  <Card title="Emotion" icon="face-smile" href="https://emotion.sh/docs/introduction">
+    Flexible CSS-in-JS library. Similar API to styled-components with a focus on performance.
+  </Card>
+</CardGroup>
+
+<Note>
+  If you are using React Server Components, choose a zero-runtime styling solution (such as Tailwind CSS, CSS Modules, vanilla-extract, or Panda CSS). Runtime CSS-in-JS libraries like styled-components and Emotion do not work in Server Components.
+</Note>
+
+## Storybook
+
+[Storybook](https://storybook.js.org/) lets you develop and test components in isolation, outside of the running application. Think of it as a living catalogue of every component your application uses. It is particularly useful for:
+
+- Building new components without wiring them into application state first.
+- Discovering what components already exist before creating new ones.
+- Visually testing edge cases and variants in a controlled environment.
+- Sharing the component library with designers and stakeholders.
+
+Each component gets one or more "stories" — small files that render the component in a specific state. The `Button` component's stories live in `src/components/ui/button/button.stories.tsx` alongside the component itself, following the colocate-what-you-use principle.

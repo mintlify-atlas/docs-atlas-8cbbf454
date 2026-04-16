@@ -1,0 +1,82 @@
+{
+  "projectType": "frontend",
+  "projectName": "Bulletproof React",
+  "projectDescription": "An opinionated architecture guide and sample application demonstrating scalable, production-ready React application patterns using feature-based structure, TypeScript, and modern tooling.",
+  "theme": "palm",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guide",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "introduction",
+              "application-overview"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/project-structure",
+              "architecture/project-standards",
+              "architecture/components-and-styling"
+            ]
+          },
+          {
+            "group": "Data & State",
+            "pages": [
+              "data/api-layer",
+              "data/state-management"
+            ]
+          },
+          {
+            "group": "Quality & Reliability",
+            "pages": [
+              "quality/testing",
+              "quality/error-handling",
+              "quality/security"
+            ]
+          },
+          {
+            "group": "Production",
+            "pages": [
+              "production/performance",
+              "production/deployment",
+              "production/additional-resources"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Feature-based modular project structure for scalability",
+    "TypeScript throughout for type safety",
+    "Unidirectional data flow enforced via ESLint import restrictions",
+    "Comprehensive state management strategy (component, server cache, form, URL state)",
+    "API layer with typed request declarations and react-query integration",
+    "Role-based (RBAC) and permission-based (PBAC) authorization",
+    "Multi-level testing strategy: unit, integration, and E2E with Vitest, Testing Library, and Playwright",
+    "MSW for API mocking during development and testing",
+    "Code splitting at route level for optimal performance",
+    "Support for multiple meta-frameworks: React Vite, Next.js App Router, Next.js Pages"
+  ],
+  "publicApiSurface": [
+    "src/app/ - Application layer (routes, providers, router)",
+    "src/features/{feature}/api/ - API request declarations and hooks",
+    "src/features/{feature}/components/ - Feature-scoped components",
+    "src/features/{feature}/stores/ - Feature state stores",
+    "src/components/ui/ - Shared UI component library",
+    "src/lib/api-client.ts - Preconfigured API client instance",
+    "src/lib/auth.tsx - Authentication configuration",
+    "src/lib/authorization.tsx - RBAC/PBAC authorization utilities",
+    "src/hooks/ - Shared custom hooks",
+    "src/stores/ - Global state stores",
+    "src/utils/ - Shared utility functions",
+    "src/types/ - Shared TypeScript types"
+  ]
+}

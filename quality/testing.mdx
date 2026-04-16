@@ -1,0 +1,423 @@
+---
+title: "Testing strategy and tooling for Bulletproof React"
+description: "Learn how to write unit, integration, and end-to-end tests using Vitest, Testing Library, Playwright, and MSW to build confidence in your application."
+---
+
+Bulletproof React follows a testing philosophy where integration tests deliver the most confidence. While unit tests are great for isolating individual components, they cannot tell you whether the connections between those parts actually work. Integration tests and end-to-end (E2E) tests validate real user flows and are where you should invest the majority of your testing effort.
+
+<Note>
+Integration tests are the most valuable tests you can write. Passing unit tests do not guarantee your application works correctly if the wiring between components is broken. Focus most of your testing effort at the integration level.
+</Note>
+
+## Test types
+
+<Tabs>
+  <Tab title="Unit tests">
+    Unit tests verify individual components or functions in isolation. They are fast to run and easy to write, making them ideal for testing shared UI components and complex logic that is reused across your application.
+
+    The following example tests the `ConfirmationDialog` component by simulating the full open/confirm/cancel interaction flow:
+
+    ```tsx src/components/ui/dialog/confirmation-dialog/__tests__/confirmation-dialog.test.tsx
+    import { Button } from '@/components/ui/button';
+    import { rtlRender, screen, userEvent, waitFor } from '@/testing/test-utils';
+
+    import { ConfirmationDialog } from '../confirmation-dialog';
+
+    test('should handle confirmation flow', async () => {
+      const titleText = 'Are you sure?';
+      const bodyText = 'Are you sure you want to delete this item?';
+      const confirmationButtonText = 'Confirm';
+      const openButtonText = 'Open';
+
+      await rtlRender(
+        <ConfirmationDialog
+          icon="danger"
+          title={titleText}
+          body={bodyText}
+          confirmButton={<Button>{confirmationButtonText}</Button>}
+          triggerButton={<Button>{openButtonText}</Button>}
+        />,
+      );
+
+      expect(screen.queryByText(titleText)).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: openButtonText }));
+
+      expect(await screen.findByText(titleText)).toBeInTheDocument();
+
+      expect(screen.getByText(bodyText)).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() =>
+        expect(screen.queryByText(titleText)).not.toBeInTheDocument(),
+      );
+
+      expect(screen.queryByText(bodyText)).not.toBeInTheDocument();
+    });
+    ```
+  </Tab>
+
+  <Tab title="Integration tests">
+    Integration tests check how multiple parts of your application work together. Rather than mocking everything, you render real features against a mocked API server (MSW) and exercise the full component tree. This gives you meaningful confidence that your app behaves correctly for real users.
+
+    The following example renders the full discussion route, creates a comment, and then deletes it — exercising data fetching, form submission, and UI state all together:
+
+    ```tsx src/app/routes/app/discussions/__tests__/discussion.test.tsx
+    import {
+      renderApp,
+      screen,
+      userEvent,
+      waitFor,
+      createDiscussion,
+      createUser,
+      within,
+    } from '@/testing/test-utils';
+
+    import { default as DiscussionRoute } from '../discussion';
+
+    const renderDiscussion = async () => {
+      const fakeUser = await createUser();
+      const fakeDiscussion = await createDiscussion({ teamId: fakeUser.teamId });
+
+      const utils = await renderApp(<DiscussionRoute />, {
+        user: fakeUser,
+        path: `/app/discussions/:discussionId`,
+        url: `/app/discussions/${fakeDiscussion.id}`,
+      });
+
+      await screen.findByText(fakeDiscussion.title);
+
+      return {
+        ...utils,
+        fakeUser,
+        fakeDiscussion,
+      };
+    };
+
+    test('should render discussion', async () => {
+      const { fakeDiscussion } = await renderDiscussion();
+      expect(screen.getByText(fakeDiscussion.body)).toBeInTheDocument();
+    });
+
+    test(
+      'should create and delete a comment on the discussion',
+      async () => {
+        await renderDiscussion();
+
+        const comment = 'Hello World';
+
+        await userEvent.click(
+          screen.getByRole('button', { name: /create comment/i }),
+        );
+
+        const drawer = await screen.findByRole('dialog', {
+          name: /create comment/i,
+        });
+
+        const bodyField = await within(drawer).findByText(/body/i);
+
+        await userEvent.type(bodyField, comment);
+
+        const submitButton = await within(drawer).findByRole('button', {
+          name: /submit/i,
+        });
+
+        await userEvent.click(submitButton);
+
+        await waitFor(() => expect(drawer).not.toBeInTheDocument());
+
+        await screen.findByText(comment);
+      },
+      { timeout: 20000 },
+    );
+    ```
+  </Tab>
+
+  <Tab title="E2E tests">
+    End-to-end tests automate the complete application — both frontend and backend — to confirm the entire system works correctly. E2E tests simulate how a real user interacts with your app, navigating pages, filling forms, and verifying visible outcomes.
+
+    The following smoke test covers the full lifecycle of a discussion and its comments:
+
+    ```typescript e2e/tests/smoke.spec.ts
+    import { test, expect } from '@playwright/test';
+
+    import {
+      createDiscussion,
+      createComment,
+    } from '../../src/testing/data-generators';
+
+    test('smoke', async ({ page }) => {
+      const discussion = createDiscussion();
+      const comment = createComment();
+
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Get started' }).click();
+      await page.waitForURL('/app');
+
+      // create discussion:
+      await page.getByRole('link', { name: 'Discussions' }).click();
+      await page.waitForURL('/app/discussions');
+
+      await page.getByRole('button', { name: 'Create Discussion' }).click();
+      await page.getByLabel('Title').fill(discussion.title);
+      await page.getByLabel('Body').fill(discussion.body);
+      await page.getByRole('button', { name: 'Submit' }).click();
+      await page
+        .getByLabel('Discussion Created')
+        .getByRole('button', { name: 'Close' })
+        .click();
+
+      // visit discussion page:
+      await page.getByRole('link', { name: 'View' }).click();
+
+      await expect(
+        page.getByRole('heading', { name: discussion.title }),
+      ).toBeVisible();
+      await expect(page.getByText(discussion.body)).toBeVisible();
+
+      // create comment:
+      await page.getByRole('button', { name: 'Create Comment' }).click();
+      await page.getByLabel('Body').fill(comment.body);
+      await page.getByRole('button', { name: 'Submit' }).click();
+      await expect(page.getByText(comment.body)).toBeVisible();
+
+      // delete comment:
+      await page.getByRole('button', { name: 'Delete Comment' }).click();
+      await page.getByRole('button', { name: 'Delete Comment' }).click();
+      await expect(
+        page.getByRole('heading', { name: 'No Comments Found' }),
+      ).toBeVisible();
+
+      // delete discussion:
+      await page.getByRole('link', { name: 'Discussions' }).click();
+      await page.getByRole('button', { name: 'Delete Discussion' }).click();
+      await page.getByRole('button', { name: 'Delete Discussion' }).click();
+      await expect(
+        page.getByRole('heading', { name: 'No Entries Found' }),
+      ).toBeVisible();
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Recommended tooling
+
+<CardGroup cols={2}>
+  <Card title="Vitest" icon="flask-vial" href="https://vitest.dev">
+    A fast, modern testing framework compatible with the Jest API. Works natively with Vite and supports ES modules without configuration overhead.
+  </Card>
+  <Card title="Testing Library" icon="vial" href="https://testing-library.com">
+    A suite of utilities that encourages testing from the user's perspective — asserting on what the user sees on screen rather than internal component state.
+  </Card>
+  <Card title="Playwright" icon="robot" href="https://playwright.dev">
+    A tool for running E2E tests in real browsers. Use browser mode locally to debug visually, and headless mode in CI/CD pipelines for automated runs on every deploy.
+  </Card>
+  <Card title="MSW" icon="server" href="https://mswjs.io">
+    Mock Service Worker intercepts HTTP requests at the network level using a service worker. Define handlers that mirror your real API so tests make actual `fetch` calls instead of mocking the network layer directly.
+  </Card>
+</CardGroup>
+
+## MSW handlers and mock database
+
+MSW lets you build a fully functional mocked API server by defining request handlers and an in-memory database. You do not need to mock `fetch` — your application code makes real HTTP requests that MSW intercepts and responds to with realistic data.
+
+<Tip>
+Using MSW for your test environment gives you realistic API behavior without a running backend. Your application code stays unchanged between test and production environments, so tests are more representative of real-world usage.
+</Tip>
+
+### Auth handlers
+
+The following handlers implement the full authentication flow — register, login, logout, and fetching the current user — against the mock database:
+
+```typescript src/testing/mocks/handlers/auth.ts
+import Cookies from 'js-cookie';
+import { HttpResponse, http } from 'msw';
+
+import { env } from '@/config/env';
+
+import { db, persistDb } from '../db';
+import {
+  authenticate,
+  hash,
+  requireAuth,
+  AUTH_COOKIE,
+  networkDelay,
+} from '../utils';
+
+type RegisterBody = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  teamId?: string;
+  teamName?: string;
+};
+
+type LoginBody = {
+  email: string;
+  password: string;
+};
+
+export const authHandlers = [
+  http.post(`${env.API_URL}/auth/register`, async ({ request }) => {
+    await networkDelay();
+    try {
+      const userObject = (await request.json()) as RegisterBody;
+
+      const existingUser = db.user.findFirst({
+        where: {
+          email: {
+            equals: userObject.email,
+          },
+        },
+      });
+
+      if (existingUser) {
+        return HttpResponse.json(
+          { message: 'The user already exists' },
+          { status: 400 },
+        );
+      }
+
+      let teamId;
+      let role;
+
+      if (!userObject.teamId) {
+        const team = db.team.create({
+          name: userObject.teamName ?? `${userObject.firstName} Team`,
+        });
+        await persistDb('team');
+        teamId = team.id;
+        role = 'ADMIN';
+      } else {
+        const existingTeam = db.team.findFirst({
+          where: {
+            id: {
+              equals: userObject.teamId,
+            },
+          },
+        });
+
+        if (!existingTeam) {
+          return HttpResponse.json(
+            { message: 'The team you are trying to join does not exist!' },
+            { status: 400 },
+          );
+        }
+        teamId = userObject.teamId;
+        role = 'USER';
+      }
+
+      db.user.create({
+        ...userObject,
+        role,
+        password: hash(userObject.password),
+        teamId,
+      });
+
+      await persistDb('user');
+
+      const result = authenticate({
+        email: userObject.email,
+        password: userObject.password,
+      });
+
+      Cookies.set(AUTH_COOKIE, result.jwt, { path: '/' });
+
+      return HttpResponse.json(result, {
+        headers: {
+          'Set-Cookie': `${AUTH_COOKIE}=${result.jwt}; Path=/;`,
+        },
+      });
+    } catch (error: any) {
+      return HttpResponse.json(
+        { message: error?.message || 'Server Error' },
+        { status: 500 },
+      );
+    }
+  }),
+
+  http.post(`${env.API_URL}/auth/login`, async ({ request }) => {
+    await networkDelay();
+    try {
+      const credentials = (await request.json()) as LoginBody;
+      const result = authenticate(credentials);
+
+      Cookies.set(AUTH_COOKIE, result.jwt, { path: '/' });
+
+      return HttpResponse.json(result, {
+        headers: {
+          'Set-Cookie': `${AUTH_COOKIE}=${result.jwt}; Path=/;`,
+        },
+      });
+    } catch (error: any) {
+      return HttpResponse.json(
+        { message: error?.message || 'Server Error' },
+        { status: 500 },
+      );
+    }
+  }),
+
+  http.get(`${env.API_URL}/auth/me`, async ({ cookies }) => {
+    await networkDelay();
+    try {
+      const { user } = requireAuth(cookies);
+      return HttpResponse.json({ data: user });
+    } catch (error: any) {
+      return HttpResponse.json(
+        { message: error?.message || 'Server Error' },
+        { status: 500 },
+      );
+    }
+  }),
+];
+```
+
+### Mock database
+
+The mock database uses `@mswjs/data` to define typed models with primary keys and relationships. It persists to `localStorage` in the browser and to a JSON file in Node.js, so data survives page reloads during development:
+
+```typescript src/testing/mocks/db.ts
+import { factory, primaryKey } from '@mswjs/data';
+import { nanoid } from 'nanoid';
+
+const models = {
+  user: {
+    id: primaryKey(nanoid),
+    firstName: String,
+    lastName: String,
+    email: String,
+    password: String,
+    teamId: String,
+    role: String,
+    bio: String,
+    createdAt: Date.now,
+  },
+  team: {
+    id: primaryKey(nanoid),
+    name: String,
+    description: String,
+    createdAt: Date.now,
+  },
+  discussion: {
+    id: primaryKey(nanoid),
+    title: String,
+    body: String,
+    authorId: String,
+    teamId: String,
+    createdAt: Date.now,
+  },
+  comment: {
+    id: primaryKey(nanoid),
+    body: String,
+    authorId: String,
+    discussionId: String,
+    createdAt: Date.now,
+  },
+};
+
+export const db = factory(models);
+
+export type Model = keyof typeof models;
+```

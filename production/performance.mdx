@@ -1,0 +1,284 @@
+---
+title: "Performance optimization strategies for React apps"
+description: "Learn how to apply code splitting, state optimizations, image best practices, web vitals monitoring, and data prefetching in production React applications."
+---
+
+Performance optimization in a React application requires a multi-layered approach. You need to reduce the amount of JavaScript the browser parses upfront, minimize unnecessary re-renders, deliver assets efficiently, and monitor real-user metrics over time. This page covers the key strategies you can apply to a Bulletproof React project.
+
+## Code splitting
+
+Code splitting breaks your production JavaScript bundle into smaller chunks so the browser downloads only the code it needs for the current route. This reduces initial load time without sacrificing functionality elsewhere.
+
+Implement code splitting at the route level using the `lazy` option in React Router. Each route module is fetched on demand rather than bundled together upfront.
+
+```tsx router.tsx
+import { QueryClient, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { createBrowserRouter } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
+
+import { paths } from '@/config/paths';
+import { ProtectedRoute } from '@/lib/auth';
+
+import {
+  default as AppRoot,
+  ErrorBoundary as AppRootErrorBoundary,
+} from './routes/app/root';
+
+const convert = (queryClient: QueryClient) => (m: any) => {
+  const { clientLoader, clientAction, default: Component, ...rest } = m;
+  return {
+    ...rest,
+    loader: clientLoader?.(queryClient),
+    action: clientAction?.(queryClient),
+    Component,
+  };
+};
+
+export const createAppRouter = (queryClient: QueryClient) =>
+  createBrowserRouter([
+    {
+      path: paths.home.path,
+      lazy: () => import('./routes/landing').then(convert(queryClient)),
+    },
+    {
+      path: paths.auth.register.path,
+      lazy: () => import('./routes/auth/register').then(convert(queryClient)),
+    },
+    {
+      path: paths.auth.login.path,
+      lazy: () => import('./routes/auth/login').then(convert(queryClient)),
+    },
+    {
+      path: paths.app.root.path,
+      element: (
+        <ProtectedRoute>
+          <AppRoot />
+        </ProtectedRoute>
+      ),
+      ErrorBoundary: AppRootErrorBoundary,
+      children: [
+        {
+          path: paths.app.discussions.path,
+          lazy: () =>
+            import('./routes/app/discussions/discussions').then(
+              convert(queryClient),
+            ),
+        },
+        {
+          path: paths.app.discussion.path,
+          lazy: () =>
+            import('./routes/app/discussions/discussion').then(
+              convert(queryClient),
+            ),
+        },
+        {
+          path: paths.app.users.path,
+          lazy: () => import('./routes/app/users').then(convert(queryClient)),
+        },
+        {
+          path: paths.app.profile.path,
+          lazy: () => import('./routes/app/profile').then(convert(queryClient)),
+        },
+        {
+          path: paths.app.dashboard.path,
+          lazy: () =>
+            import('./routes/app/dashboard').then(convert(queryClient)),
+        },
+      ],
+    },
+    {
+      path: '*',
+      lazy: () => import('./routes/not-found').then(convert(queryClient)),
+    },
+  ]);
+```
+
+<Warning>
+Avoid splitting every component into its own chunk. Excessive code splitting increases the total number of network requests, which can degrade performance rather than improve it. Focus splitting on route boundaries and large, infrequently used features.
+</Warning>
+
+<Tip>
+The `vite.config.ts` in the React Vite app sets `experimentalMinChunkSize: 3500` to prevent Vite from creating tiny chunks that would hurt network performance.
+</Tip>
+
+## Component and state optimizations
+
+React re-renders components when their state or props change. Structuring your state and components carefully reduces the number of unnecessary renders.
+
+**Split state by concern.** Avoid putting everything into a single state object. When one field changes, every component subscribed to that state re-renders. Split global state into multiple slices scoped to where they are used.
+
+**Keep state close to where it is used.** Lifting state higher than necessary causes parent and sibling components to re-render when only a child's state changes.
+
+**Use the `useState` initializer function for expensive computations.** Passing a function to `useState` ensures the initializer runs only once on mount, not on every re-render:
+
+```javascript
+// Anti-pattern: myExpensiveFn() runs on every re-render
+const [state, setState] = React.useState(myExpensiveFn());
+
+// Correct: the initializer function runs only once
+const [state, setState] = React.useState(() => myExpensiveFn());
+```
+
+<Warning>
+Passing the result of an expensive function directly to `useState` (rather than a function reference) is a common pitfall. The computation runs on every render even though `useState` only uses the value once.
+</Warning>
+
+**Consider atomic state management for large element sets.** If your application tracks state for many items simultaneously, a library like [jotai](https://jotai.pmnd.rs/) provides atomic updates that avoid re-rendering unrelated components.
+
+**Use React Context for low-velocity data only.** Context works well for themes, user data, and small local state. For medium- or high-velocity data, consider [use-context-selector](https://github.com/dai-shi/use-context-selector) or a state library with built-in selectors like [zustand](https://docs.pmnd.rs/zustand/getting-started/introduction) or [jotai](https://jotai.org/). Before reaching for context, evaluate whether [lifting state up](https://react.dev/learn/sharing-state-between-components#lifting-state-up-by-example) or [component composition](https://react.dev/learn/passing-data-deeply-with-context#before-you-use-context) addresses the problem instead.
+
+**Prefer zero-runtime styling solutions for high-update UIs.** If your application updates frequently, runtime CSS-in-JS solutions like [emotion](https://emotion.sh/docs/introduction) or [styled-components](https://styled-components.com/) generate styles on each render. Zero-runtime alternatives like [Tailwind CSS](https://tailwindcss.com/), [vanilla-extract](https://github.com/seek-oss/vanilla-extract), or [CSS Modules](https://github.com/css-modules/css-modules) generate styles at build time and have no render-time cost.
+
+### Children prop optimization
+
+The `children` prop is one of the simplest and most effective optimization techniques available. JSX passed as `children` is an isolated virtual DOM structure — the parent component cannot cause it to re-render when its own state changes.
+
+```javascript
+// Not optimized: PureComponent re-renders every time count changes
+const App = () => <Counter />;
+
+const Counter = () => {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div>
+      <button onClick={() => setCount((count) => count + 1)}>
+        count is {count}
+      </button>
+      <PureComponent /> // will rerender whenever "count" updates
+    </div>
+  );
+};
+
+const PureComponent = () => <p>Pure Component</p>;
+
+// Optimized: PureComponent is passed as children and is not re-rendered
+const App = () => (
+  <Counter>
+    <PureComponent />
+  </Counter>
+);
+
+const Counter = ({ children }) => {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div>
+      <button onClick={() => setCount((count) => count + 1)}>
+        count is {count}
+      </button>
+      {children} // won't rerender whenever "count" updates
+    </div>
+  );
+};
+
+const PureComponent = () => <p>Pure Component</p>;
+```
+
+<Tip>
+Reaching for `React.memo`, `useMemo`, and `useCallback` before trying the `children` pattern is premature optimization. The `children` approach requires no extra APIs and often eliminates the need for memoization entirely.
+</Tip>
+
+## Image optimizations
+
+Images are frequently the largest assets on a page. Apply these practices to keep them from becoming a bottleneck:
+
+- **Lazy load off-screen images.** Use the `loading="lazy"` attribute on `<img>` elements so the browser defers fetching images that are not in the viewport.
+- **Use modern image formats.** WEBP images are typically 25–35% smaller than equivalent JPEG or PNG files at comparable quality.
+- **Use `srcset` for responsive images.** Serve different image sizes based on the user's screen resolution so mobile devices don't download desktop-sized images.
+
+## Web vitals
+
+Google uses web vitals as a ranking signal for search results. Monitor your scores regularly using [Lighthouse](https://web.dev/measure/) and [PageSpeed Insights](https://pagespeed.web.dev/). Both tools measure Core Web Vitals including Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS), and Interaction to Next Paint (INP).
+
+<Tip>
+Run Lighthouse in an incognito window to avoid interference from browser extensions, and test on a throttled connection to simulate real-world mobile conditions.
+</Tip>
+
+## Data prefetching
+
+You can prefetch data before the user navigates to a page using `queryClient.prefetchQuery` from `@tanstack/react-query`. This is useful when you can predict the user's next action — for example, prefetching a discussion's data when the user hovers over a link to that discussion.
+
+The `discussions-list.tsx` component demonstrates this pattern: it calls `prefetchQuery` on `mouseenter` so the data is ready in the cache by the time the user clicks through.
+
+```tsx discussions-list.tsx
+import { useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router';
+
+import { Link } from '@/components/ui/link';
+import { Spinner } from '@/components/ui/spinner';
+import { Table } from '@/components/ui/table';
+import { paths } from '@/config/paths';
+import { formatDate } from '@/utils/format';
+
+import { getDiscussionQueryOptions } from '../api/get-discussion';
+import { useDiscussions } from '../api/get-discussions';
+
+import { DeleteDiscussion } from './delete-discussion';
+
+export const DiscussionsList = ({
+  onDiscussionPrefetch,
+}: DiscussionsListProps) => {
+  const [searchParams] = useSearchParams();
+
+  const discussionsQuery = useDiscussions({
+    page: +(searchParams.get('page') || 1),
+  });
+  const queryClient = useQueryClient();
+
+  // ...
+
+  return (
+    <Table
+      data={discussions}
+      columns={[
+        // ...
+        {
+          title: '',
+          field: 'id',
+          Cell({ entry: { id } }) {
+            return (
+              <Link
+                onMouseEnter={() => {
+                  // Prefetch the discussion data when the user hovers over the link
+                  queryClient.prefetchQuery(getDiscussionQueryOptions(id));
+                  onDiscussionPrefetch?.(id);
+                }}
+                to={paths.app.discussion.getHref(id)}
+              >
+                View
+              </Link>
+            );
+          },
+        },
+      ]}
+    />
+  );
+};
+```
+
+## Performance audit checklist
+
+Use this checklist when preparing a release for production:
+
+<Steps>
+  <Step title="Run Lighthouse">
+    Open Chrome DevTools, navigate to the **Lighthouse** tab, and run an audit against a production build. Address any issues flagged under Performance, Accessibility, and Best Practices.
+  </Step>
+  <Step title="Check bundle size">
+    Run `vite build` and review the output. Look for unexpectedly large chunks. Use [Bundle Buddy](https://bundle-buddy.com/) or the Rollup visualizer plugin to identify large dependencies.
+  </Step>
+  <Step title="Verify route-level code splitting">
+    Confirm that each route uses `lazy` loading and that the initial bundle does not include route-specific code.
+  </Step>
+  <Step title="Audit images">
+    Check that all images are served in WEBP format, use `srcset`, and have `loading="lazy"` where appropriate.
+  </Step>
+  <Step title="Review state structure">
+    Identify any state that is broader than it needs to be. Move state closer to the components that use it.
+  </Step>
+  <Step title="Check PageSpeed Insights">
+    Run your production URL through [PageSpeed Insights](https://pagespeed.web.dev/) to get field data on real-user Core Web Vitals.
+  </Step>
+</Steps>

@@ -1,0 +1,389 @@
+---
+title: 'State management: five categories and recommended tools'
+description: 'Learn how Bulletproof React divides state into five categories — component, application, server cache, form, and URL — with tool recommendations for each.'
+---
+
+Effective state management starts with categorization. Rather than reaching for a global store by default, Bulletproof React divides state into five distinct categories based on where it lives and who needs it. Matching each category to the right tool keeps components lean, avoids unnecessary re-renders, and makes the data flow through your application easy to reason about.
+
+<Tip>
+  Keep state as close as possible to where it is used. A value only one
+  component needs belongs in that component. Elevate state only when a second
+  component genuinely requires it — and only as far up the tree as necessary.
+</Tip>
+
+## Component state
+
+Component state is local to a single component. Pass it down to children as props when needed, but do not put it in a global store. React gives you two hooks for this:
+
+- `useState` — for simple, independent values such as a toggle or a counter.
+- `useReducer` — for more complex state where a single action must update several related pieces at once.
+
+<Tabs>
+  <Tab title="useState">
+    Use `useState` when the state is a single value or when updates to different pieces of state are independent of each other.
+
+    ```tsx src/components/layouts/dashboard-layout.tsx
+    import { useState } from 'react';
+
+    const Progress = () => {
+      const [progress, setProgress] = useState(0);
+
+      // progress updates are independent — useState is sufficient
+      return (
+        <div
+          className="fixed left-0 top-0 h-1 bg-blue-500 transition-all duration-200 ease-in-out"
+          style={{ width: `${progress}%` }}
+        />
+      );
+    };
+    ```
+  </Tab>
+  <Tab title="useReducer">
+    Use `useReducer` when a single action needs to update multiple related values, or when the next state depends on the previous one in a non-trivial way.
+
+    ```tsx
+    import { useReducer } from 'react';
+
+    type State = { count: number; error: string | null };
+    type Action =
+      | { type: 'increment' }
+      | { type: 'reset' }
+      | { type: 'error'; payload: string };
+
+    function reducer(state: State, action: Action): State {
+      switch (action.type) {
+        case 'increment':
+          return { count: state.count + 1, error: null };
+        case 'reset':
+          return { count: 0, error: null };
+        case 'error':
+          return { ...state, error: action.payload };
+      }
+    }
+
+    const Counter = () => {
+      const [state, dispatch] = useReducer(reducer, { count: 0, error: null });
+
+      return (
+        <div>
+          <button onClick={() => dispatch({ type: 'increment' })}>+</button>
+          <span>{state.count}</span>
+        </div>
+      );
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Do not put everything in global state. Globalizing state that only one
+  component uses makes the application harder to maintain and introduces
+  unnecessary coupling. Start local and promote only when a second consumer
+  genuinely needs the same value.
+</Note>
+
+## Application state
+
+Application state controls UI that spans the whole app — things like notification queues, global modals, and color mode. Bulletproof React uses [Zustand](https://github.com/pmndrs/zustand) for this because it avoids boilerplate while remaining outside the React tree, which lets you access store state from non-component code such as API interceptors.
+
+The notifications store is a representative example:
+
+```typescript src/components/ui/notifications/notifications-store.ts
+import { nanoid } from 'nanoid';
+import { create } from 'zustand';
+
+export type Notification = {
+  id: string;
+  type: 'info' | 'warning' | 'success' | 'error';
+  title: string;
+  message?: string;
+};
+
+type NotificationsStore = {
+  notifications: Notification[];
+  addNotification: (notification: Omit<Notification, 'id'>) => void;
+  dismissNotification: (id: string) => void;
+};
+
+export const useNotifications = create<NotificationsStore>((set) => ({
+  notifications: [],
+  addNotification: (notification) =>
+    set((state) => ({
+      notifications: [
+        ...state.notifications,
+        { id: nanoid(), ...notification },
+      ],
+    })),
+  dismissNotification: (id) =>
+    set((state) => ({
+      notifications: state.notifications.filter(
+        (notification) => notification.id !== id,
+      ),
+    })),
+}));
+```
+
+Because `useNotifications` is a Zustand store, the API client can call `useNotifications.getState().addNotification(...)` directly from the Axios response interceptor — no React context required.
+
+<CardGroup cols={2}>
+  <Card title="Context + hooks" icon="react">
+    Built into React. Best for simple global values like the current user or theme that change infrequently.
+  </Card>
+  <Card title="Zustand" icon="bolt">
+    Minimal API, no providers required. Access state outside components. Ideal for notification queues and UI toggles.
+  </Card>
+  <Card title="Jotai" icon="atom">
+    Atomic model. Each piece of state is an independent atom, making granular subscriptions straightforward.
+  </Card>
+  <Card title="Redux Toolkit" icon="layer-group">
+    Full-featured with DevTools and middleware. Best suited to large teams or applications with complex update logic.
+  </Card>
+</CardGroup>
+
+## Server cache state
+
+Server cache state is remote data fetched from an API and stored locally for reuse. Reach for a dedicated caching library instead of a general-purpose store — these libraries handle background refetching, cache invalidation, deduplication, and loading/error states out of the box.
+
+The `getDiscussionsQueryOptions` factory in the discussions feature is a good pattern to follow. Exporting query options separately lets route loaders and prefetch calls share the same query key without duplicating logic:
+
+```typescript src/features/discussions/api/get-discussions.ts
+import { queryOptions, useQuery } from '@tanstack/react-query';
+
+import { api } from '@/lib/api-client';
+import { QueryConfig } from '@/lib/react-query';
+import { Discussion, Meta } from '@/types/api';
+
+export const getDiscussions = (
+  page = 1,
+): Promise<{
+  data: Discussion[];
+  meta: Meta;
+}> => {
+  return api.get(`/discussions`, {
+    params: {
+      page,
+    },
+  });
+};
+
+export const getDiscussionsQueryOptions = ({
+  page,
+}: { page?: number } = {}) => {
+  return queryOptions({
+    queryKey: page ? ['discussions', { page }] : ['discussions'],
+    queryFn: () => getDiscussions(page),
+  });
+};
+
+export const useDiscussions = ({
+  queryConfig,
+  page,
+}: UseDiscussionsOptions) => {
+  return useQuery({
+    ...getDiscussionsQueryOptions({ page }),
+    ...queryConfig,
+  });
+};
+```
+
+<CardGroup cols={2}>
+  <Card title="TanStack Query" icon="database">
+    REST and GraphQL. Background refetching, pagination, optimistic updates. The default choice in Bulletproof React.
+  </Card>
+  <Card title="SWR" icon="rotate">
+    Lightweight alternative to TanStack Query. REST and GraphQL support with a simpler API surface.
+  </Card>
+  <Card title="Apollo Client" icon="circle-nodes">
+    GraphQL-first. Normalized cache, subscriptions, and a rich ecosystem of Apollo tooling.
+  </Card>
+  <Card title="RTK Query" icon="layer-group">
+    Part of Redux Toolkit. Good choice if you are already using Redux and want server cache managed in the same store.
+  </Card>
+</CardGroup>
+
+## Form state
+
+Forms manage their own state — field values, validation errors, touched state, and submission status. Use a dedicated form library rather than `useState` per field: libraries like React Hook Form minimize re-renders and integrate with schema validators.
+
+Bulletproof React wraps React Hook Form in an abstracted `Form` component that accepts a Zod schema and injects the form methods into children via a render prop. The `Input` component wraps native `<input>` and accepts a `registration` prop from React Hook Form's `register` function.
+
+```tsx src/components/ui/form/input.tsx
+import * as React from 'react';
+import { type UseFormRegisterReturn } from 'react-hook-form';
+
+import { cn } from '@/utils/cn';
+
+import { FieldWrapper, FieldWrapperPassThroughProps } from './field-wrapper';
+
+export type InputProps = React.InputHTMLAttributes<HTMLInputElement> &
+  FieldWrapperPassThroughProps & {
+    className?: string;
+    registration: Partial<UseFormRegisterReturn>;
+  };
+
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, label, error, registration, ...props }, ref) => {
+    return (
+      <FieldWrapper label={label} error={error}>
+        <input
+          type={type}
+          className={cn(
+            'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+            className,
+          )}
+          ref={ref}
+          {...registration}
+          {...props}
+        />
+      </FieldWrapper>
+    );
+  },
+);
+Input.displayName = 'Input';
+
+export { Input };
+```
+
+The register form shows these abstractions in practice, including Zod validation with `registerInputSchema`:
+
+```tsx src/features/auth/components/register-form.tsx
+import * as React from 'react';
+import { Link, useSearchParams } from 'react-router';
+
+import { Button } from '@/components/ui/button';
+import { Form, Input, Select, Label, Switch } from '@/components/ui/form';
+import { useRegister, registerInputSchema } from '@/lib/auth';
+import { Team } from '@/types/api';
+
+type RegisterFormProps = {
+  onSuccess: () => void;
+  chooseTeam: boolean;
+  setChooseTeam: () => void;
+  teams?: Team[];
+};
+
+export const RegisterForm = ({
+  onSuccess,
+  chooseTeam,
+  setChooseTeam,
+  teams,
+}: RegisterFormProps) => {
+  const registering = useRegister({ onSuccess });
+
+  return (
+    <Form
+      onSubmit={(values) => {
+        registering.mutate(values);
+      }}
+      schema={registerInputSchema}
+      options={{ shouldUnregister: true }}
+    >
+      {({ register, formState }) => (
+        <>
+          <Input
+            type="text"
+            label="First Name"
+            error={formState.errors['firstName']}
+            registration={register('firstName')}
+          />
+          <Input
+            type="text"
+            label="Last Name"
+            error={formState.errors['lastName']}
+            registration={register('lastName')}
+          />
+          <Input
+            type="email"
+            label="Email Address"
+            error={formState.errors['email']}
+            registration={register('email')}
+          />
+          <Input
+            type="password"
+            label="Password"
+            error={formState.errors['password']}
+            registration={register('password')}
+          />
+          {chooseTeam && teams ? (
+            <Select
+              label="Team"
+              error={formState.errors['teamId']}
+              registration={register('teamId')}
+              options={teams.map((team) => ({
+                label: team.name,
+                value: team.id,
+              }))}
+            />
+          ) : (
+            <Input
+              type="text"
+              label="Team Name"
+              error={formState.errors['teamName']}
+              registration={register('teamName')}
+            />
+          )}
+          <Button isLoading={registering.isPending} type="submit" className="w-full">
+            Register
+          </Button>
+        </>
+      )}
+    </Form>
+  );
+};
+```
+
+<CardGroup cols={2}>
+  <Card title="React Hook Form" icon="pen-to-square">
+    Uncontrolled inputs with minimal re-renders. Pairs naturally with Zod via `@hookform/resolvers`. The default choice in Bulletproof React.
+  </Card>
+  <Card title="Formik" icon="table-list">
+    Controlled inputs with a mature ecosystem. More explicit API, well-suited to complex multi-step forms.
+  </Card>
+</CardGroup>
+
+## URL state
+
+URL state is any data stored in the browser's address bar — either as route parameters (e.g., `/discussions/:id`) or query parameters (e.g., `/discussions?page=2`). Use `react-router` to read and write URL state so that users can bookmark filtered views and browser navigation works as expected.
+
+The discussions list reads the current page number from `useSearchParams`:
+
+```tsx src/features/discussions/components/discussions-list.tsx
+import { useSearchParams } from 'react-router';
+import { useDiscussions } from '../api/get-discussions';
+
+export const DiscussionsList = ({ onDiscussionPrefetch }) => {
+  const [searchParams] = useSearchParams();
+
+  const discussionsQuery = useDiscussions({
+    page: +(searchParams.get('page') || 1),
+  });
+
+  // ...
+};
+```
+
+The discussion detail view receives its `discussionId` as a route parameter resolved by the router before the component renders:
+
+```tsx src/features/discussions/components/discussion-view.tsx
+import { useDiscussion } from '../api/get-discussion';
+
+export const DiscussionView = ({ discussionId }: { discussionId: string }) => {
+  const discussionQuery = useDiscussion({ discussionId });
+
+  if (discussionQuery.isLoading) {
+    return <Spinner size="lg" />;
+  }
+
+  const discussion = discussionQuery?.data?.data;
+  if (!discussion) return null;
+
+  return (
+    <div>
+      <span className="text-xs font-bold">{formatDate(discussion.createdAt)}</span>
+      <MDPreview value={discussion.body} />
+    </div>
+  );
+};
+```
+
+URL state works particularly well for pagination, filters, search terms, and selected item IDs — values that users expect to survive a page refresh or be shareable via link.
